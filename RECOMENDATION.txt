@@ -58,3 +58,52 @@ if split_info is not None:
     Trade-gate пока держи без p_move (или хотя бы не требуй p_move ≥ 0.68 одновременно с conf и margin). Сначала добейся стабильного win-rate по чистому conf≥0.72–0.75 & margin≥0.10, потом вернёшь 2-stage.
 
 Если коротко: сделай freq='D', purge_periods=0, подними NEWS_PILE_THRESHOLD и снизь MIN_H до 3. Это максимум данных без порчи домена.
+
+
+
+
+
+
+
+
+
+
+19:58
+# —— Разметка направления
+THR_MIN_PIPS = 1.8          # нижний порог в пипсах
+THR_COEFF    = 0.60         # коэффициент * предволы 15м
+USE_VOL_QUANTILE = False    # квантильный режим порога выкл
+VOL_QUANTILE = 0.70         # если включишь квантильный режим
+
+# —— Динамический горизонт окна
+MAX_H_MIN = 60              # максимум до t+dyn
+MIN_H_MIN = 3               # минимум (снизили до 3 минут)
+
+# —— Анти-«свалки» на один timestamp
+NEWS_PILE_THRESHOLD = 80    # жёсткий отсек крупной свалки
+MAX_EVENTS_PER_TIMESTAMP = 60   # мягкий каппинг: оставляем топ-60 по fx_weight
+
+# —— Сплит (трен/тест)
+SPLIT_MODE = "events"       # "events" | "periods" | "quantile"
+SPLIT_FREQ = "D"            # шаг периодов (для "events"/"periods")
+TEST_EVENT_FRAC  = 0.15     # доля событий в тесте (цель — 12–18%)
+TEST_PERIOD_FRAC = 0.20     # если выберешь "periods"
+PURGE_PERIODS    = 0        # сан.зона между train/test (пока 0 — данных мало)
+
+# —— Бусты классов/событий
+BOOST_DOWN = 1.35
+BOOST_NEU  = 1.00
+BOOST_UP   = 2.10
+SINGLETON_BOOST_MAX = 1.30  # потолок буста одиночных событий
+
+# —— Трейд-гейты
+CONF_GATE       = 0.72      # минимальная уверенность (max prob)
+MOVE_GATE_TRADE = 0.68      # вероятность «есть движение»
+MARGIN_GATE     = 0.10      # разрыв между топ-1 и топ-2 вероятностями
+MOVE_GATE_2STAGE = 0.60     # порог «движение» для 2-стадии
+
+# —— Прочее
+EXCLUDE_PREFIXES = ('te_stock_market_', 'te_stocks_')
+DROP_CONST_FEATURES_MIN_NUNIQUE = 2
+
+    Если захочется жестче отсеивать «свалки», уменьши MAX_EVENTS_PER_TIMESTAMP до 40; если нужно добрать трейн — подними TEST_EVENT_FRAC до 0.18.
