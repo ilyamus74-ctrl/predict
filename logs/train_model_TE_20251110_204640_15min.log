@@ -1,0 +1,43 @@
+2025-11-10 22:46:40,578Z - INFO - ==== TE V5 Trainer start ====
+2025-11-10 22:46:40,578Z - INFO - Connecting DB...
+2025-11-10 22:46:40,636Z - INFO - DB OK
+2025-11-10 22:46:40,636Z - INFO - Loading prices...
+2025-11-10 22:48:22,868Z - INFO - Indicators (RSI/SMA/ATR)...
+2025-11-10 22:48:26,214Z - INFO - Daily trends (SMA/trend)...
+2025-11-10 22:48:27,680Z - INFO - Loading TE news...
+2025-11-10 22:48:27,954Z - INFO - Filtered news piles >20: 9449 removed
+2025-11-10 22:48:27,954Z - INFO - Loading imp_cache_tradingeconomics...
+2025-11-10 22:48:27,968Z - INFO - Building targets (direction/magnitude) with +15m horizon...
+2025-11-10 22:48:30,101Z - INFO - Dynamic horizon filter: 1329 -> 871 events (removed 458 with horizon < 5m)
+2025-11-10 22:48:30,590Z - INFO - Building features...
+2025-11-10 22:48:30,600Z - INFO - Loading correlation features...
+2025-11-10 22:48:30,606Z - INFO - Falling back to correlation_trends (currency/year).
+2025-11-10 22:48:30,629Z - INFO - Applied currency/year correlation fallback.
+2025-11-10 22:48:31,570Z - INFO - Time split @ 2025-11-06 20:30:24+00:00: train=696, test=175
+2025-11-10 22:48:31,571Z - INFO - Class balance (train): Counter({np.int64(2): 336, np.int64(1): 184, np.int64(0): 176})
+2025-11-10 22:48:31,571Z - INFO - Class balance (test): Counter({np.int64(1): 91, np.int64(2): 47, np.int64(0): 37})
+2025-11-10 22:48:31,571Z - INFO - Baseline (majority=2) acc=0.2686
+2025-11-10 22:48:31,571Z - INFO - Train RandomForest (direction)...
+2025-11-10 22:48:32,468Z - INFO - GridSearch XGBClassifier (direction)...
+2025-11-10 22:48:53,427Z - INFO - Best XGB params: {'learning_rate': 0.1, 'max_depth': 4, 'n_estimators': 200}
+2025-11-10 22:48:53,535Z - INFO - 
+Confusion matrix [rows=true (0,1,2), cols=pred]:
+[[19 11  7]
+ [10 76  5]
+ [10  2 35]]
+2025-11-10 22:48:53,544Z - INFO - 
+              precision    recall  f1-score   support
+
+           0      0.487     0.514     0.500        37
+           1      0.854     0.835     0.844        91
+           2      0.745     0.745     0.745        47
+
+    accuracy                          0.743       175
+   macro avg      0.695     0.698     0.696       175
+weighted avg      0.747     0.743     0.745       175
+
+2025-11-10 22:48:53,546Z - INFO - Ensemble (RF+XGB) direction: acc=0.7429 f1=0.6964
+2025-11-10 22:48:53,666Z - INFO - GridSearch XGBRegressor (magnitude)...
+2025-11-10 22:48:55,517Z - INFO - Best XGBReg params: {'learning_rate': 0.1, 'max_depth': 6, 'n_estimators': 200}
+2025-11-10 22:48:55,523Z - INFO - RMSE magnitude (pips) @+15m: 2.1862
+2025-11-10 22:48:55,527Z - INFO - ==== TE V5 Trainer done ====
