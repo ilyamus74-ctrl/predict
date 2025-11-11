@@ -687,11 +687,15 @@ else:
     if purge_count > 0:
         logging.info(f"Blocked split purge removed {purge_count} events between train/test blocks")
     if not valid_mask.all():
-        news = news.loc[valid_mask].reset_index(drop=True)
-        X = X.loc[valid_mask].reset_index(drop=True)
-        y_mag = y_mag[valid_mask]
-        train_mask_all = train_mask_all[valid_mask]
-        test_mask_all = test_mask_all[valid_mask]
+        mask_bool = valid_mask.astype(bool)
+        news = news.loc[mask_bool].reset_index(drop=True)
+        X = X.loc[mask_bool].reset_index(drop=True)
+        y_mag = y_mag[mask_bool]
+        thr_series = thr_series.iloc[mask_bool].reset_index(drop=True)
+        delta_pips_arr = delta_pips_arr[mask_bool]
+        thr_arr = thr_series.to_numpy()
+        train_mask_all = train_mask_all[mask_bool]
+        test_mask_all = test_mask_all[mask_bool]
     y_dir = news[LABEL_COL].astype(int).values
     SPLIT_DATE = split_info['split_date']
     mask_time = pd.Series(train_mask_all.astype(bool), index=news.index)
