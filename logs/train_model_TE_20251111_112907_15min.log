@@ -1,0 +1,58 @@
+2025-11-11 13:29:07,530Z - INFO - ==== TE V5 Trainer start ====
+2025-11-11 13:29:07,531Z - INFO - Connecting DB...
+2025-11-11 13:29:07,586Z - INFO - DB OK
+2025-11-11 13:29:07,586Z - INFO - Loading prices...
+2025-11-11 13:32:09,131Z - INFO - Indicators (RSI/SMA/ATR)...
+2025-11-11 13:32:12,853Z - INFO - Daily trends (SMA/trend)...
+2025-11-11 13:32:14,466Z - INFO - Loading TE news...
+2025-11-11 13:32:15,275Z - INFO - Filtered news piles >20: 9449 removed
+2025-11-11 13:32:15,275Z - INFO - Loading imp_cache_tradingeconomics...
+2025-11-11 13:32:15,290Z - INFO - Building targets (direction/magnitude) with +15m horizon...
+2025-11-11 13:32:17,279Z - INFO - Dynamic horizon filter: 1437 -> 979 events (removed 458 with horizon < 5m)
+2025-11-11 13:32:17,765Z - INFO - Direction classification thresholds: min=1.2, coeff=0.4
+2025-11-11 13:32:17,765Z - INFO - Threshold range: [1.20, 1.36] pips, median=1.20
+2025-11-11 13:32:17,765Z - INFO - Building features...
+2025-11-11 13:32:17,777Z - INFO - Loading correlation features...
+2025-11-11 13:32:17,782Z - INFO - Falling back to correlation_trends (currency/year).
+2025-11-11 13:32:17,807Z - INFO - Applied currency/year correlation fallback.
+2025-11-11 13:32:18,699Z - WARNING - Dropping constant features: ['imp_year_trend', 'price_change', 'corr_direction', 'probability', 'observations']
+2025-11-11 13:32:18,775Z - INFO - Oversampling to max class: before=[205, 350, 228], after=[350, 350, 350]
+2025-11-11 13:32:18,775Z - INFO - Time split @ 2025-11-10 07:38:37+00:00: train=783, test=196
+2025-11-11 13:32:18,776Z - INFO - Class balance (train): Counter({np.int64(1): 350, np.int64(2): 228, np.int64(0): 205})
+2025-11-11 13:32:18,776Z - INFO - Class balance (test): Counter({np.int64(1): 86, np.int64(2): 58, np.int64(0): 52})
+2025-11-11 13:32:18,777Z - INFO - Baseline (majority=1) acc=0.4388
+2025-11-11 13:32:18,777Z - INFO - Train RandomForest (direction)...
+2025-11-11 13:32:20,242Z - INFO - GridSearch XGBClassifier (direction)...
+2025-11-11 13:33:03,997Z - INFO - Best XGB params: {'colsample_bytree': 0.7, 'learning_rate': 0.1, 'max_depth': 6, 'n_estimators': 200, 'subsample': 0.7}
+2025-11-11 13:33:07,722Z - INFO - Pred counts (raw): [13, 183, 0]
+2025-11-11 13:33:07,722Z - INFO - Avg probs (raw p0,p1,p2): [0.191, 0.6753, 0.1338]
+2025-11-11 13:33:07,722Z - INFO - Train priors: [0.2618, 0.447, 0.2912], alpha: [1.115, 0.876, 1.063]
+2025-11-11 13:33:07,722Z - INFO - Avg probs (adj p0,p1,p2): [0.2194, 0.6326, 0.1479]
+2025-11-11 13:33:07,722Z - INFO - Pred counts (adj+margin): [21, 175, 0]
+2025-11-11 13:33:07,725Z - INFO - 
+Confusion matrix [rows=true (0,1,2), cols=pred]:
+[[ 4 48  0]
+ [ 5 81  0]
+ [12 46  0]]
+2025-11-11 13:33:07,733Z - INFO - 
+              precision    recall  f1-score   support
+
+           0      0.190     0.077     0.110        52
+           1      0.463     0.942     0.621        86
+           2      0.000     0.000     0.000        58
+
+    accuracy                          0.434       196
+   macro avg      0.218     0.340     0.243       196
+weighted avg      0.254     0.434     0.301       196
+
+2025-11-11 13:33:07,736Z - INFO - Ensemble (RF+XGB+BRF) direction: acc=0.4337 f1=0.2434
+2025-11-11 13:33:07,737Z - INFO - 
+=== Confidence-based filtering ===
+2025-11-11 13:33:07,739Z - INFO - Conf>=0.50: coverage=75.51% n=148 acc=0.486 f1=0.251
+2025-11-11 13:33:07,742Z - INFO - Conf>=0.55: coverage=62.24% n=122 acc=0.500 f1=0.244
+2025-11-11 13:33:07,745Z - INFO - Conf>=0.60: coverage=52.55% n=103 acc=0.524 f1=0.229
+2025-11-11 13:33:07,747Z - INFO - Conf>=0.65: coverage=45.92% n= 90 acc=0.533 f1=0.232
+2025-11-11 13:33:07,750Z - INFO - Conf>=0.70: coverage=34.69% n= 68 acc=0.485 f1=0.218
+2025-11-11 13:33:07,752Z - INFO - Conf>=0.75: coverage=26.02% n= 51 acc=0.529 f1=0.231
+2025-11-11 13:33:07,753Z - INFO - 
+=== Performance by event type (top 10) ===

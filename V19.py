@@ -701,19 +701,34 @@ event_stats = test_news.groupby('event_key').agg({
     'delta_pips_dyn': 'mean',
     MAG_COL: 'mean'
 }).round(3)
-event_stats.columns = ['correct', 'total', 'accuracy', 'avg_delta', 'avg_magnitude']
+event_stats.columns = [
+    'correct',
+    'total',
+    'accuracy',
+    'avg_delta',
+    'avg_delta_dyn',
+    'avg_magnitude'
+]
 event_stats = event_stats[event_stats['total'] >= 3].sort_values('accuracy', ascending=False)
 
 logging.info("\nTop 10 best performing events:")
 for idx, row in event_stats.head(10).iterrows():
-    logging.info(f"  {idx}: acc={row['accuracy']:.3f} ({int(row['correct'])}/{int(row['total'])}) "
-                 f"avg_delta={row['avg_delta']:+.2f} avg_mag={row['avg_magnitude']:.2f}")
-
+    logging.info(
+        f"  {idx}: acc={row['accuracy']:.3f} ({int(row['correct'])}/{int(row['total'])}) "
+        f"avg_delta={row['avg_delta']:+.2f} "
+        f"avg_delta_dyn={row['avg_delta_dyn']:+.2f} "
+        f"avg_mag={row['avg_magnitude']:.2f}"
+    )
+    
 logging.info("\nBottom 10 worst performing events:")
 for idx, row in event_stats.tail(10).iterrows():
-    logging.info(f"  {idx}: acc={row['accuracy']:.3f} ({int(row['correct'])}/{int(row['total'])}) "
-                 f"avg_delta={row['avg_delta']:+.2f} avg_mag={row['avg_magnitude']:.2f}")
-
+    logging.info(
+        f"  {idx}: acc={row['accuracy']:.3f} ({int(row['correct'])}/{int(row['total'])}) "
+        f"avg_delta={row['avg_delta']:+.2f} "
+        f"avg_delta_dyn={row['avg_delta_dyn']:+.2f} "
+        f"avg_mag={row['avg_magnitude']:.2f}"
+    )
+    
 # save
 
 joblib.dump(rf_clf,   f'{MODEL_DIR}/model_te_direction_rf_15m.pkl')

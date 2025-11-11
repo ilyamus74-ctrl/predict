@@ -5,7 +5,6 @@ text_len
 sent_finbert
 sent_label_id
 imp_year_vol
-imp_year_trend
 volatility_pre_15m
 RSI_14
 SMA_20
@@ -27,10 +26,10 @@ trend_3Q
 trend_6Q
 trend_12Q
 correlation
-price_change
-corr_direction
-probability
-observations
 ret_pre_5m
 ret_pre_15m
 ret_pre_15m_norm
+accel_5_15
+RSI_high
+RSI_low
+sent_pos_x_accel
