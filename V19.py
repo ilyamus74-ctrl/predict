@@ -325,6 +325,7 @@ news['magnitude_pips'] = np.abs(news['delta_pips'])
 news['ret_pre_5m']  = pips(news['close_t0'].values - news['close_pre5'].values)
 news['ret_pre_15m'] = pips(news['close_t0'].values - news['close_pre15'].values)
 news[['ret_pre_5m','ret_pre_15m']] = news[['ret_pre_5m','ret_pre_15m']].fillna(0.0)
+news['sign_ret15'] = np.sign(news['ret_pre_15m']).astype(int)
 
 # Нормировка на волатильность
 news['ret_pre_15m_norm'] = news['ret_pre_15m'] / (
@@ -355,6 +356,8 @@ news['day_of_week'] = news['published_at'].dt.dayofweek.astype(int)
 news['sent_finbert'] = news['sent_finbert'].astype(float).fillna(0.0)
 news['sent_label']   = (news['sent_label'].astype(str).fillna('neu'))
 news['sent_label_id'] = news['sent_label'].map({'neg':0,'neu':1,'pos':2}).fillna(1).astype(int)
+news['sent_pos'] = (news['sent_label_id'] == 2).astype(int)
+news['sent_neg'] = (news['sent_label_id'] == 0).astype(int)
 
 # текстовые метрики
 text_len = news['text_clean'].fillna('').astype(str).str.len()
@@ -477,14 +480,14 @@ news['sent_pos_x_accel'] = np.clip(news['sent_finbert'], 0, None) * news['accel_
 # ---------- DATASET ----------
 FEATURES = [
     'hour','day_of_week','event_key_encoded','text_len',
-    'sent_finbert','sent_label_id',
-    'imp_year_vol','imp_year_trend',
+    'sent_finbert','sent_label_id','sent_pos','sent_neg',
+    'imp_year_vol',
     'volatility_pre_15m','RSI_14','SMA_20','ATR_14',
     'SMA_365','trend_365',
     'SMA_1M','SMA_3M','SMA_6M','SMA_12M','trend_1M','trend_3M','trend_6M','trend_12M',
     'SMA_3Q','SMA_6Q','SMA_12Q','trend_3Q','trend_6Q','trend_12Q',
-    'correlation','price_change','corr_direction','probability','observations',
-    'ret_pre_5m','ret_pre_15m','ret_pre_15m_norm',
+    'correlation',
+    'ret_pre_5m','ret_pre_15m','sign_ret15','ret_pre_15m_norm',
     'accel_5_15','RSI_high','RSI_low','sent_pos_x_accel'
 ]
 
@@ -633,7 +636,7 @@ logging.info("Best XGB params: %s", grid_xgb.best_params_)
 brf = BalancedRandomForestClassifier(
     n_estimators=400, random_state=42, n_jobs=-1, max_depth=None
 )
-brf.fit(X_train_dir, y_train_dir)
+brf.fit(X_train_bal, y_train_bal)
 
 # Прогнозы вероятностей
 rf_probs  = rf_clf.predict_proba(X_test_dir)
@@ -655,15 +658,22 @@ alpha = (train_priors.mean() / np.clip(train_priors, 1e-6, 1.0)) ** TEMP
 ens_probs = ens_probs_raw * alpha
 ens_probs = ens_probs / ens_probs.sum(axis=1, keepdims=True)
 
+# Дополнительный биас: мягко подтолкнуть экстремальные классы
+bias = np.array([1.05, 1.0, 1.18])
+ens_probs = ens_probs * bias
+ens_probs = ens_probs / ens_probs.sum(axis=1, keepdims=True)
+
 logging.info(f"Train priors: {np.round(train_priors,4).tolist()}, alpha: {np.round(alpha,3).tolist()}")
+logging.info("Applied post-ensemble bias (p0×1.05, p2×1.18)")
 logging.info(f"Avg probs (adj p0,p1,p2): {np.round(ens_probs.mean(axis=0),4).tolist()}")
 
-# === Margin rule: "экстремы" должны обгонять нейтраль на MARGIN
+# === Margin rule: асимметрия для ап/даун движений
 p0, p1, p2 = ens_probs[:, 0], ens_probs[:, 1], ens_probs[:, 2]
-MARGIN = 0.06
+MARGIN_2 = 0.025
+MARGIN_0 = 0.07
 ens_pred = np.where(
-    (p2 - p1) >= MARGIN, 2,
-    np.where((p0 - p1) >= MARGIN, 0, np.argmax(ens_probs, axis=1))
+    (p2 - p1) >= MARGIN_2, 2,
+    np.where((p0 - p1) >= MARGIN_0, 0, np.argmax(ens_probs, axis=1))
 )
 logging.info(f"Pred counts (adj+margin): {np.bincount(ens_pred, minlength=3).tolist()}")
 
@@ -688,6 +698,23 @@ for thr in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]:
     f1_t  = f1_score(y_test_dir[mask], ens_pred[mask], average='macro', zero_division=0)
     cov = mask.mean()
     logging.info(f"Conf>={thr:.2f}: coverage={cov:6.2%} n={mask.sum():3d} acc={acc_t:.3f} f1={f1_t:.3f}")
+
+logging.info("\n=== Trade gate: conf>=0.70 + class-specific cutoffs ===")
+trade_mask = (conf >= 0.70) & (
+    ((ens_pred == 2) & (p2 >= 0.40)) |
+    ((ens_pred == 0) & (p0 >= 0.45)) |
+    (ens_pred == 1)
+)
+if trade_mask.sum() == 0:
+    logging.info("Trade gate: no predictions passed thresholds")
+else:
+    acc_trade = accuracy_score(y_test_dir[trade_mask], ens_pred[trade_mask])
+    f1_trade  = f1_score(y_test_dir[trade_mask], ens_pred[trade_mask], average='macro', zero_division=0)
+    cov_trade = trade_mask.mean()
+    logging.info(
+        f"Trade gate coverage={cov_trade:6.2%} n={trade_mask.sum():3d} "
+        f"acc={acc_trade:.3f} f1={f1_trade:.3f}"
+    )
 
 # === НОВОЕ: Диагностика по типам событий ===
 logging.info("\n=== Performance by event type (top 10) ===")
