@@ -34,7 +34,7 @@ CURRENCY_PAIR = 'EURUSD'
 PRICE_TABLE   = 'HistDataEURUSD'
 START_DATE    = '2008-01-01'
 TIMEFRAME_FWD = 15
-NEWS_PILE_THRESHOLD = 80 # было 20
+NEWS_PILE_THRESHOLD = 20
 
 DB_CONNECTION = os.getenv(
     "DB_CONNECTION",
@@ -288,7 +288,7 @@ for col in ['close_t0', 'close_pre5', 'close_pre15']:
 
 # === Динамический горизонт: до следующей новости ТОГО ЖЕ ТИПА, но не дольше 60м ===
 MAX_H = 60  # минут
-MIN_H = 3   # минимальный горизонт 5 было
+MIN_H = 5   # минимальный горизонт
 
 # Сортируем по event_key и времени
 news = news.sort_values(['event_key', 'published_at']).reset_index(drop=True)
@@ -668,8 +668,7 @@ counts = [iv.contains(ts).sum() for ts in news['published_at']]
 news['news_count_pm15m'] = np.asarray(counts, dtype=int)
 news['singleton_boost'] = np.where(news['news_count_pm15m'] == 1, 1.5, 1.0)
 
-#split_info = blocked_time_split(news, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1)
-split_info = blocked_time_split(news, ts_col='published_at', test_frac=0.20, freq='D', purge_periods=0)
+split_info = blocked_time_split(news, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1)
 
 if split_info is None:
     logging.info("Using quantile time split (fallback)")
