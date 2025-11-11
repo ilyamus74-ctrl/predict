@@ -394,17 +394,28 @@ else:
         THR_COEFF * news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
     )
 
+# После ряда merge_asof индексы Series могут «разъехаться» (например, если pandas
+# создаёт копии с собственной меткой индекса). Сравнение Series с разными индексами
+# приводит к ValueError «Can only compare identically-labeled Series objects».
+# Явно приводим и порог, и дельту к позиционным numpy-массивам, чтобы избежать
+# попыток алгебры по индексам и сохранить логику.
+thr_series = pd.Series(np.asarray(thr, dtype=float), index=news.index)
+delta_pips_arr = news['delta_pips'].to_numpy()
+thr_arr = thr_series.to_numpy()
+
 news['direction_cls'] = np.where(
-    news['delta_pips'] >  thr, 2,
-    np.where(news['delta_pips'] < -thr, 0, 1)
+    delta_pips_arr > thr_arr, 2,
+    np.where(delta_pips_arr < -thr_arr, 0, 1)
 ).astype(int)
 
 logging.info(
     f"Direction classification thresholds mode={thr_mode}: min={THR_MIN_PIPS}, coeff={THR_COEFF}, "
     f"vol_q={vol_q_value:.2f}"
 )
-logging.info(f"Threshold range: [{thr.min():.2f}, {thr.max():.2f}] pips, median={thr.median():.2f}")
-
+logging.info(
+    "Threshold range: [%.2f, %.2f] pips, median=%.2f",
+    float(thr_series.min()), float(thr_series.max()), float(thr_series.median())
+)
 # ---------- FEATURES ----------
 logging.info("Building features...")
 
@@ -832,7 +843,7 @@ else:
 # ===== 2-stage: MOVE (есть движение?) -> DIRECTION (down/up на движениях) =====
 
 # 1) бинарная метка «есть движение» по твоему же thr
-news['is_move'] = (np.abs(news['delta_pips']) > thr).astype(int)
+news['is_move'] = (np.abs(delta_pips_arr) > thr_arr).astype(int)
 y_move = news['is_move'].values
 
 from xgboost import XGBClassifier as XGBc
