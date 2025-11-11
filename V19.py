@@ -42,6 +42,47 @@ DB_CONNECTION = os.getenv(
 )
 # ============================================
 
+
+### TUNING KNOBS ###
+# --- Event labeling / thresholds
+THR_MIN_PIPS: float = 1.8        # минимальный базовый порог в пипсах
+THR_COEFF: float = 0.60          # множитель для волатильности при линейном режиме
+USE_VOL_QUANTILE: bool = False   # если True — используем квантиль волатильности вместо линейной формулы
+VOL_QUANTILE: float = 0.70       # квантиль предволатильности для порога (при USE_VOL_QUANTILE=True)
+
+# --- Dynamic horizon
+MAX_H_MIN: int = 60              # максимальный горизонт до следующей точки входа (минуты)
+MIN_H_MIN: int = 3               # минимальный допустимый горизонт (минуты)
+
+# --- Event pile filtering
+NEWS_PILE_THRESHOLD: int = 80                # жёсткий порог на число событий в published_at (дропаем таймстамп)
+MAX_EVENTS_PER_TIMESTAMP: int | None = 60    # мягкий кап на события в одном published_at по fx_weight (None = без лимита)
+
+# --- Data split (train/test)
+SPLIT_MODE: str = "events"       # режим сплита: events | periods | quantile
+SPLIT_FREQ: str = "D"            # частота агрегации для сплита по периодам/событиям
+TEST_EVENT_FRAC: float = 0.12     # доля событий в тесте для режима events
+TEST_PERIOD_FRAC: float = 0.20    # доля периодов в тесте для режима periods
+PURGE_PERIODS: int = 0            # санитарная зона между train и test в периодах
+
+# --- Class weights / boosts
+BOOST_DOWN: float = 1.35          # доп. буст веса класса down
+BOOST_NEU: float = 1.00           # доп. буст веса класса neutral
+BOOST_UP: float = 2.10            # доп. буст веса класса up
+SINGLETON_BOOST_MAX: float = 1.30 # максимум усиления для одиночных событий
+
+# --- Trade gating thresholds
+CONF_GATE: float = 0.72           # порог уверенности ансамбля для торгового сигнала
+MOVE_GATE_TRADE: float = 0.68     # порог вероятности движения из move-модели
+MARGIN_GATE: float = 0.10         # минимум отрыва между топ-2 вероятностями
+MOVE_GATE_2STAGE: float = 0.60    # порог движения для двухстадийного контура
+
+# --- Misc
+EXCLUDE_PREFIXES: tuple[str, ...] = ('te_stock_market_', 'te_stocks_')  # исключаемые префиксы event_key
+DROP_CONST_FEATURES_MIN_NUNIQUE: int = 2   # если уникальных значений меньше этого порога — дроп фичу
+
+
+
 log_filename = f"{MODEL_DIR}/logs/train_model_TE_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_15min.log"
 
 logging.basicConfig(
@@ -58,6 +99,27 @@ with engine.begin() as conn:
     conn.execute(text("SET time_zone = '+00:00'"))
     conn.execute(text("SET NAMES utf8mb4"))
 logging.info("DB OK")
+
+logging.info(
+    "Config dump: split_mode=%s freq=%s test_event_frac=%.2f test_period_frac=%.2f "
+    "max_events_per_ts=%s thr_min=%.2f thr_coeff=%.2f use_vol_quantile=%s vol_q=%.2f "
+    "min_h=%d max_h=%d gates(conf=%.2f move_trade=%.2f margin=%.2f move_2stage=%.2f)",
+    SPLIT_MODE,
+    SPLIT_FREQ,
+    TEST_EVENT_FRAC,
+    TEST_PERIOD_FRAC,
+    'None' if MAX_EVENTS_PER_TIMESTAMP is None else MAX_EVENTS_PER_TIMESTAMP,
+    THR_MIN_PIPS,
+    THR_COEFF,
+    USE_VOL_QUANTILE,
+    VOL_QUANTILE,
+    MIN_H_MIN,
+    MAX_H_MIN,
+    CONF_GATE,
+    MOVE_GATE_TRADE,
+    MARGIN_GATE,
+    MOVE_GATE_2STAGE,
+)
 
 # ---------- UTILS ----------
 def slugify(s: str) -> str:
@@ -166,9 +228,13 @@ news['event_key'] = [
 news['year'] = news['published_at'].dt.year
 
 # маркер фондовых сводок (убираем из всего набора, чтобы не разъезжались домены)
-news['is_stock'] = news['event_key'].str.startswith(('te_stock_market_', 'te_stocks_')).astype(int)
+news['is_stock'] = news['event_key'].fillna('').str.startswith(EXCLUDE_PREFIXES).astype(int)
 
-EXCLUDE_PREFIXES = ('te_stock_market_', 'te_stocks_')
+logging.info(
+    "Applying event filters in order: exclude prefixes -> cap per timestamp -> drop piles >%d",
+    NEWS_PILE_THRESHOLD,
+)
+
 before_exclude = len(news)
 news = news[~news['event_key'].fillna('').str.startswith(EXCLUDE_PREFIXES)].reset_index(drop=True)
 removed_events = before_exclude - len(news)
@@ -191,6 +257,27 @@ news['fx_weight'] = 1.0
 news.loc[is_fxish, 'fx_weight'] = 1.25
 news.loc[news['is_stock'] == 1, 'fx_weight'] = 0.75
 
+if MAX_EVENTS_PER_TIMESTAMP is not None:
+    before_cap = len(news)
+    news = (
+        news.sort_values(['published_at', 'fx_weight'], ascending=[True, False])
+        .groupby('published_at', group_keys=False)
+        .head(MAX_EVENTS_PER_TIMESTAMP)
+        .sort_values('published_at')
+        .reset_index(drop=True)
+    )
+    kept = len(news)
+    dropped = before_cap - kept
+    logging.info(
+        "Capped per-timestamp events to %s: kept %d, dropped %d",
+        MAX_EVENTS_PER_TIMESTAMP,
+        kept,
+        dropped,
+    )
+else:
+    logging.info("Capping per timestamp disabled (MAX_EVENTS_PER_TIMESTAMP=None)")
+
+
 
 # Фильтр свалок
 cnt_per_ts = news.groupby('published_at').size()
@@ -198,7 +285,14 @@ piles = cnt_per_ts[cnt_per_ts > NEWS_PILE_THRESHOLD].index
 if len(piles) > 0:
     before = len(news)
     news = news[~news['published_at'].isin(piles)]
-    logging.info(f"Filtered news piles >{NEWS_PILE_THRESHOLD}: {before-len(news)} removed")
+    logging.info(
+        "Filtered news piles >%d: removed %d events across %d timestamps",
+        NEWS_PILE_THRESHOLD,
+        before - len(news),
+        len(piles),
+    )
+else:
+    logging.info(f"No timestamps exceeded NEWS_PILE_THRESHOLD={NEWS_PILE_THRESHOLD}")
 
 # ---------- JOIN imp_cache_tradingeconomics ----------
 logging.info("Loading imp_cache_tradingeconomics...")
@@ -287,8 +381,6 @@ for col in ['close_t0', 'close_pre5', 'close_pre15']:
             news[col] = news[col].iloc[:, 0]
 
 # === Динамический горизонт: до следующей новости ТОГО ЖЕ ТИПА, но не дольше 60м ===
-MAX_H = 60  # минут
-MIN_H = 3   # минимальный горизонт 5 было
 
 # Сортируем по event_key и времени
 news = news.sort_values(['event_key', 'published_at']).reset_index(drop=True)
@@ -296,8 +388,8 @@ news = news.sort_values(['event_key', 'published_at']).reset_index(drop=True)
 # Время следующей новости ТОГО ЖЕ event_key
 news['t_next_news'] = news.groupby('event_key')['published_at'].shift(-1)
 
-# Кап времени: published_at + 60м
-news['t_cap'] = news['published_at'] + pd.to_timedelta(MAX_H, unit='m')
+# Кап времени: published_at + MAX_H_MIN минут
+news['t_cap'] = news['published_at'] + pd.to_timedelta(MAX_H_MIN, unit='m')
 
 # Берём минимум (следующая новость того же типа или 60м)
 # Если t_next_news = NaT (последняя новость в группе), используем t_cap
@@ -311,9 +403,15 @@ news['horizon_min'] = (news['t_plus_dyn'] - news['published_at']).dt.total_secon
 
 # Фильтруем слишком короткие горизонты
 before_filter = len(news)
-news = news[news['horizon_min'] >= MIN_H].reset_index(drop=True)
+news = news[news['horizon_min'] >= MIN_H_MIN].reset_index(drop=True)
 after_filter = len(news)
-logging.info(f"Dynamic horizon filter: {before_filter} -> {after_filter} events (removed {before_filter - after_filter} with horizon < {MIN_H}m)")
+logging.info(
+    "Dynamic horizon filter: %d -> %d events (removed %d with horizon < %dm)",
+    before_filter,
+    after_filter,
+    before_filter - after_filter,
+    MIN_H_MIN,
+)
 
 # Возвращаем сортировку по времени для дальнейших операций
 news = news.sort_values('published_at').reset_index(drop=True)
@@ -330,13 +428,6 @@ news = pd.merge_asof(
 news['delta_pips_dyn'] = pips(news['close_tplus_dyn'] - news['close_t0']).astype(float).fillna(0.0)
 news['magnitude_pips_dyn'] = np.abs(news['delta_pips_dyn'])
 
-# Порог динамический
-
-THR_MIN_PIPS = 1.8  # вариант 1 (по умолчанию)
-THR_COEFF    = 0.60
-USE_VOL_QUANTILE = False  # вариант 2: квантиль по предволатильности
-VOL_QUANTILE = 0.70
-
 vol_q_value = news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median()).quantile(VOL_QUANTILE)
 if USE_VOL_QUANTILE:
     base_thr = np.maximum(
@@ -347,13 +438,13 @@ if USE_VOL_QUANTILE:
             vol_q_value
         )
     )
-    thr_mode = f"quantile q={VOL_QUANTILE:.2f} (value={vol_q_value:.2f})"
+    thr_mode = f"quantile thr_min={THR_MIN_PIPS:.2f} q={VOL_QUANTILE:.2f} value={vol_q_value:.2f}"
 else:
     base_thr = np.maximum(
         THR_MIN_PIPS,
         THR_COEFF * news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
     )
-    thr_mode = f"linear coeff={THR_COEFF:.2f}, quantile candidate={vol_q_value:.2f}"
+    thr_mode = f"linear thr_min={THR_MIN_PIPS:.2f} coeff={THR_COEFF:.2f}"
 
 scale = np.sqrt(np.clip(news['horizon_min'] / 15.0, 0.5, 4.0))
 thr_dyn = (base_thr * scale).astype(float)
@@ -408,13 +499,13 @@ news['direction_cls'] = np.where(
     np.where(delta_pips_arr < -thr_arr, 0, 1)
 ).astype(int)
 
+logging.info("Direction classification thresholds: %s", thr_mode)
 logging.info(
-    f"Direction classification thresholds mode={thr_mode}: min={THR_MIN_PIPS}, coeff={THR_COEFF}, "
-    f"vol_q={vol_q_value:.2f}"
-)
-logging.info(
-    "Threshold range: [%.2f, %.2f] pips, median=%.2f",
-    float(thr_series.min()), float(thr_series.max()), float(thr_series.median())
+    "Threshold range (%s): min=%.2f max=%.2f median=%.2f",
+    'quantile' if USE_VOL_QUANTILE else 'linear',
+    float(thr_series.min()),
+    float(thr_series.max()),
+    float(thr_series.median()),
 )
 # ---------- FEATURES ----------
 logging.info("Building features...")
@@ -591,12 +682,16 @@ y_mag = np.log1p(news[MAG_COL].astype(float).values)
 
 # Дроп константных фич (часто после фоллбэка корры все нули)
 nunique = X.nunique(dropna=False)
-const_cols = nunique[nunique <= 1].index.tolist()
+const_cols = nunique[nunique < DROP_CONST_FEATURES_MIN_NUNIQUE].index.tolist()
 if const_cols:
-    logging.warning(f"Dropping constant features: {const_cols}")
+    logging.warning(
+        "Dropping low-variance features (nunique<%d): %s",
+        DROP_CONST_FEATURES_MIN_NUNIQUE,
+        const_cols,
+    )
     FEATURES = [c for c in FEATURES if c not in const_cols]
     X = news[FEATURES].copy()
-    
+
 # imputers
 num_cols = X.select_dtypes(include=[np.number]).columns
 imp_num = SimpleImputer(strategy='median')
@@ -615,6 +710,74 @@ def time_split_by_quantile(df_ts, X, y, ts_col='published_at', test_frac=0.2):
         split_date = df_ts[ts_col].quantile(0.7)
         mask = df_ts[ts_col] < split_date
     return X[mask].copy(), X[~mask].copy(), y[mask], y[~mask], split_date
+
+
+def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_periods):
+    ts_series = pd.to_datetime(df_ts[ts_col])
+    if ts_series.empty:
+        logging.warning("Event share split: no timestamps available")
+        return None
+
+    periods = ts_series.dt.to_period(freq)
+    unique_periods = sorted(periods.unique())
+    if len(unique_periods) < 2:
+        logging.warning("Event share split: not enough periods for blocked split")
+        return None
+
+    period_series = periods.to_series(index=df_ts.index)
+    period_counts = period_series.value_counts().reindex(unique_periods, fill_value=0)
+    total_events = int(period_counts.sum())
+    if total_events == 0:
+        logging.warning("Event share split: zero events after filtering")
+        return None
+
+    target_events = int(np.ceil(total_events * target_frac))
+    target_events = max(target_events, 1)
+
+    cum = 0
+    n_test = 0
+    for count in reversed(period_counts.values):
+        n_test += 1
+        cum += int(count)
+        if cum >= target_events:
+            break
+
+    n_test = min(n_test, len(unique_periods))
+    if n_test <= 0 or n_test >= len(unique_periods):
+        logging.warning("Event share split: unable to allocate distinct train/test periods")
+        return None
+
+    test_start_idx = len(unique_periods) - n_test
+    purge_width = min(purge_periods, max(test_start_idx, 0))
+    purge_start_idx = max(test_start_idx - purge_width, 0)
+    train_end_idx = purge_start_idx
+
+    train_periods = unique_periods[:train_end_idx]
+    purge_zone = unique_periods[purge_start_idx:test_start_idx]
+    test_periods = unique_periods[test_start_idx:]
+
+    if len(train_periods) == 0:
+        logging.warning("Event share split: train set would be empty")
+        return None
+
+    periods_series = periods.sort_index()
+    mask_train = periods_series.isin(train_periods)
+    mask_test = periods_series.isin(test_periods)
+    mask_purge = periods_series.isin(purge_zone)
+
+    split_date = pd.Timestamp(test_periods[0].start_time)
+
+    return {
+        'train_mask': mask_train.to_numpy(),
+        'test_mask': mask_test.to_numpy(),
+        'purge_mask': mask_purge.to_numpy(),
+        'split_date': split_date,
+        'train_periods': [str(p) for p in train_periods],
+        'test_periods': [str(p) for p in test_periods],
+        'purge_periods': [str(p) for p in purge_zone],
+        'mode': 'events',
+        'freq': freq,
+    }
 
 
 def blocked_time_split(df_ts, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1):
@@ -655,6 +818,8 @@ def blocked_time_split(df_ts, ts_col='published_at', test_frac=0.2, freq='W-MON'
         'train_periods': [str(p) for p in train_periods],
         'test_periods': [str(p) for p in test_periods],
         'purge_periods': [str(p) for p in purge_zone],
+        'mode': 'periods',
+        'freq': freq,
     }
 
 # Density metric
@@ -669,10 +834,32 @@ news['news_count_pm15m'] = np.asarray(counts, dtype=int)
 news['singleton_boost'] = np.where(news['news_count_pm15m'] == 1, 1.5, 1.0)
 
 #split_info = blocked_time_split(news, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1)
-split_info = blocked_time_split(news, ts_col='published_at', test_frac=0.20, freq='D', purge_periods=0)
+logging.info("Preparing train/test split: mode=%s freq=%s", SPLIT_MODE, SPLIT_FREQ)
+
+split_info = None
+purge_count = 0
+
+if SPLIT_MODE == "events":
+    split_info = blocked_time_split_by_event_share(
+        news,
+        ts_col='published_at',
+        target_frac=TEST_EVENT_FRAC,
+        freq=SPLIT_FREQ,
+        purge_periods=PURGE_PERIODS,
+    )
+elif SPLIT_MODE == "periods":
+    split_info = blocked_time_split(
+        news,
+        ts_col='published_at',
+        test_frac=TEST_PERIOD_FRAC,
+        freq=SPLIT_FREQ,
+        purge_periods=PURGE_PERIODS,
+    )
+elif SPLIT_MODE != "quantile":
+    logging.warning("Unknown SPLIT_MODE=%s -> falling back to quantile split", SPLIT_MODE)
 
 if split_info is None:
-    logging.info("Using quantile time split (fallback)")
+    logging.info("Using quantile time split (mode=%s)", SPLIT_MODE)
     y_dir = news[LABEL_COL].astype(int).values
     X_train_dir, X_test_dir, y_train_dir, y_test_dir, SPLIT_DATE = time_split_by_quantile(
         news, X, y_dir, ts_col='published_at', test_frac=0.2
@@ -702,8 +889,12 @@ else:
     mask_time = pd.Series(train_mask_all.astype(bool), index=news.index)
     mask_test_series = ~mask_time
     logging.info(
-        "Blocked split freq=W-MON train_periods=%s test_periods=%s purge=%s",
-        split_info['train_periods'], split_info['test_periods'], split_info['purge_periods']
+        "Blocked split mode=%s freq=%s train_periods=%s test_periods=%s purge=%s",
+        split_info.get('mode', SPLIT_MODE),
+        split_info.get('freq', SPLIT_FREQ),
+        split_info['train_periods'],
+        split_info['test_periods'],
+        split_info['purge_periods'],
     )
     X_train_dir = X.loc[mask_time].copy()
     X_test_dir = X.loc[mask_test_series].copy()
@@ -712,6 +903,31 @@ else:
 
 if split_info is None:
     mask_test_series = ~mask_time
+
+split_mode_used = split_info.get('mode', 'quantile') if split_info is not None else 'quantile'
+split_freq_used = split_info.get('freq', SPLIT_FREQ) if split_info is not None else SPLIT_FREQ
+
+train_events = int(mask_time.sum())
+test_events = int(mask_test_series.sum())
+total_events = len(news)
+test_share_pct = (test_events / total_events * 100.0) if total_events > 0 else 0.0
+target_pct = (
+    TEST_EVENT_FRAC * 100.0 if split_mode_used == 'events' else
+    TEST_PERIOD_FRAC * 100.0 if split_mode_used == 'periods' else
+    20.0
+)
+
+logging.info(
+    "Split result mode=%s freq=%s: train=%d (%.2f%%) test=%d (%.2f%% target=%.2f%%) purge_removed=%d",
+    split_mode_used,
+    split_freq_used,
+    train_events,
+    (train_events / total_events * 100.0) if total_events > 0 else 0.0,
+    test_events,
+    test_share_pct,
+    target_pct,
+    purge_count,
+)
 
 overall_counts = np.bincount(y_dir, minlength=3)
 overall_share = (overall_counts / overall_counts.sum()).round(4).tolist() if overall_counts.sum() > 0 else []
@@ -737,10 +953,10 @@ cw_map = {c: w for c, w in zip(classes, class_weights)}
 
 w_train = np.array([cw_map[c] for c in y_train_dir])
 # буст одиночек + FX-вес
-w_train *= np.clip(news.loc[fx_train_mask, 'singleton_boost'].to_numpy(), 1.0, 1.3)
+w_train *= np.clip(news.loc[fx_train_mask, 'singleton_boost'].to_numpy(), 1.0, SINGLETON_BOOST_MAX)
 w_train *= news.loc[fx_train_mask, 'fx_weight'].to_numpy()
 # дополнительный буст на краях: помогаем UP-классу
-class_boost = {0: 1.35, 1: 1.00, 2: 2.10}
+class_boost = {0: BOOST_DOWN, 1: BOOST_NEU, 2: BOOST_UP}
 w_train *= np.vectorize(class_boost.get)(y_train_dir)
 # нормализация, чтобы веса не «задушили» обучение
 w_train *= (len(w_train) / w_train.sum())
@@ -895,7 +1111,6 @@ dir2_xgb = XGBc(
 dir2_xgb.fit(X_train_dir2, y_train_dir2)
 
 # инференс 3-классов: если движения нет -> 1 (нейтраль); если есть -> 0/2 по бинарному направлению
-MOVE_GATE_2STAGE = 0.60
 move_yes = (p_move_test >= MOVE_GATE_2STAGE)
 
 p_dir2 = np.zeros((len(X_test_dir), 2))
@@ -926,9 +1141,6 @@ for thr in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]:
 
 logging.info("\n=== Trade gate (FX-only) ===")
 
-CONF_GATE = 0.72
-MOVE_GATE_TRADE = 0.68
-MARGIN_GATE = 0.10
 logging.info(
     f"Trade gate thresholds: conf>={CONF_GATE:.2f}, p_move>={MOVE_GATE_TRADE:.2f}, margin>={MARGIN_GATE:.2f}"
 )
