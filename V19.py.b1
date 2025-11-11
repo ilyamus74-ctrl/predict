@@ -20,9 +20,6 @@ from xgboost import XGBClassifier, XGBRegressor
 import joblib
 import pandas_ta as ta
 import re
-from math import ceil
-from sklearn.utils.class_weight import compute_class_weight
-
 
 # ================== CONFIG ==================
 PROGRAM_DIR   = '/home/ilyamus/GPTGROKWORK'
@@ -165,17 +162,8 @@ news['event_key'] = [
 ]
 news['year'] = news['published_at'].dt.year
 
-# маркер фондовых сводок (убираем из всего набора, чтобы не разъезжались домены)
+# маркер фондовых сводок (уберём их из ОБУЧЕНИЯ, но оставим в тесте для честной оценки)
 news['is_stock'] = news['event_key'].str.startswith(('te_stock_market_', 'te_stocks_')).astype(int)
-
-EXCLUDE_PREFIXES = ('te_stock_market_', 'te_stocks_')
-before_exclude = len(news)
-news = news[~news['event_key'].fillna('').str.startswith(EXCLUDE_PREFIXES)].reset_index(drop=True)
-removed_events = before_exclude - len(news)
-if removed_events > 0:
-    logging.info(f"Excluded {removed_events} stock-related events with prefixes {EXCLUDE_PREFIXES}")
-else:
-    logging.info("No stock-related events found for exclusion")
 
 
 # FX-релевантность: поднимем вес явных FX и ослабим стоковые сводки
@@ -331,29 +319,13 @@ news['delta_pips_dyn'] = pips(news['close_tplus_dyn'] - news['close_t0']).astype
 news['magnitude_pips_dyn'] = np.abs(news['delta_pips_dyn'])
 
 # Порог динамический
+THR_MIN_PIPS = 1.2
+THR_COEFF    = 0.40
 
-THR_MIN_PIPS = 1.8  # вариант 1 (по умолчанию)
-THR_COEFF    = 0.60
-USE_VOL_QUANTILE = False  # вариант 2: квантиль по предволатильности
-VOL_QUANTILE = 0.70
-
-vol_q_value = news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median()).quantile(VOL_QUANTILE)
-if USE_VOL_QUANTILE:
-    base_thr = np.maximum(
-        THR_MIN_PIPS,
-        np.where(
-            news['volatility_pre_15m'] >= vol_q_value,
-            news['volatility_pre_15m'],
-            vol_q_value
-        )
-    )
-    thr_mode = f"quantile q={VOL_QUANTILE:.2f} (value={vol_q_value:.2f})"
-else:
-    base_thr = np.maximum(
-        THR_MIN_PIPS,
-        THR_COEFF * news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
-    )
-    thr_mode = f"linear coeff={THR_COEFF:.2f}, quantile candidate={vol_q_value:.2f}"
+base_thr = np.maximum(
+    THR_MIN_PIPS,
+    THR_COEFF * news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
+)
 
 scale = np.sqrt(np.clip(news['horizon_min'] / 15.0, 0.5, 4.0))
 thr_dyn = (base_thr * scale).astype(float)
@@ -379,30 +351,16 @@ news['ret_pre_15m_norm'] = news['ret_pre_15m'] / (
 )
 
 # Порог для направления
-if USE_VOL_QUANTILE:
-    thr = np.maximum(
-        THR_MIN_PIPS,
-        np.where(
-            news['volatility_pre_15m'] >= vol_q_value,
-            news['volatility_pre_15m'],
-            vol_q_value
-        )
-    )
-else:
-    thr = np.maximum(
-        THR_MIN_PIPS,
-        THR_COEFF * news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
-    )
-
+thr = np.maximum(
+    THR_MIN_PIPS,
+    THR_COEFF * news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
+)
 news['direction_cls'] = np.where(
     news['delta_pips'] >  thr, 2,
     np.where(news['delta_pips'] < -thr, 0, 1)
 ).astype(int)
 
-logging.info(
-    f"Direction classification thresholds mode={thr_mode}: min={THR_MIN_PIPS}, coeff={THR_COEFF}, "
-    f"vol_q={vol_q_value:.2f}"
-)
+logging.info(f"Direction classification thresholds: min={THR_MIN_PIPS}, coeff={THR_COEFF}")
 logging.info(f"Threshold range: [{thr.min():.2f}, {thr.max():.2f}] pips, median={thr.median():.2f}")
 
 # ---------- FEATURES ----------
@@ -576,6 +534,7 @@ logging.info(f"Labels: use_dynamic={USE_DYNAMIC_LABELS}, y_col={LABEL_COL}, mag_
 news = news.dropna(subset=[LABEL_COL, MAG_COL]).reset_index(drop=True)
 
 X = news[FEATURES].copy()
+y_dir = news[LABEL_COL].astype(int).values
 y_mag = np.log1p(news[MAG_COL].astype(float).values)
 
 # Дроп константных фич (часто после фоллбэка корры все нули)
@@ -593,6 +552,7 @@ X[num_cols] = imp_num.fit_transform(X[num_cols])
 
 # ---------- TIME SPLIT ----------
 from collections import Counter
+from sklearn.utils.class_weight import compute_class_weight
 
 def time_split_by_quantile(df_ts, X, y, ts_col='published_at', test_frac=0.2):
     split_date = df_ts[ts_col].quantile(1 - test_frac)
@@ -605,47 +565,6 @@ def time_split_by_quantile(df_ts, X, y, ts_col='published_at', test_frac=0.2):
         mask = df_ts[ts_col] < split_date
     return X[mask].copy(), X[~mask].copy(), y[mask], y[~mask], split_date
 
-
-def blocked_time_split(df_ts, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1):
-    ts = pd.to_datetime(df_ts[ts_col]).sort_values()
-    periods = ts.dt.to_period(freq)
-    unique_periods = sorted(periods.unique())
-    if len(unique_periods) < 3:
-        logging.warning("Not enough periods for blocked split, fallback to quantile split")
-        return None
-
-    n_test = max(1, ceil(len(unique_periods) * test_frac))
-    if n_test >= len(unique_periods):
-        n_test = len(unique_periods) - 1
-    if n_test <= 0:
-        logging.warning("Blocked split: unable to allocate test periods")
-        return None
-
-    purge_periods = min(purge_periods, max(len(unique_periods) - n_test - 1, 0))
-    test_periods = unique_periods[-n_test:]
-    purge_start_idx = len(unique_periods) - n_test - purge_periods
-    purge_start_idx = max(purge_start_idx, 0)
-    train_end_idx = purge_start_idx
-    train_periods = unique_periods[:train_end_idx]
-    purge_zone = unique_periods[purge_start_idx:len(unique_periods) - n_test]
-
-    periods_series = periods.sort_index()
-    mask_train = periods_series.isin(train_periods)
-    mask_test = periods_series.isin(test_periods)
-    mask_purge = periods_series.isin(purge_zone)
-
-    split_date = pd.Timestamp(test_periods[0].start_time)
-
-    return {
-        'train_mask': mask_train.to_numpy(),
-        'test_mask': mask_test.to_numpy(),
-        'purge_mask': mask_purge.to_numpy(),
-        'split_date': split_date,
-        'train_periods': [str(p) for p in train_periods],
-        'test_periods': [str(p) for p in test_periods],
-        'purge_periods': [str(p) for p in purge_zone],
-    }
-
 # Density metric
 win = pd.to_timedelta(15, unit='m')
 starts = news['published_at'] - win
@@ -657,61 +576,17 @@ counts = [iv.contains(ts).sum() for ts in news['published_at']]
 news['news_count_pm15m'] = np.asarray(counts, dtype=int)
 news['singleton_boost'] = np.where(news['news_count_pm15m'] == 1, 1.5, 1.0)
 
-split_info = blocked_time_split(news, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1)
-
-if split_info is None:
-    logging.info("Using quantile time split (fallback)")
-    y_dir = news[LABEL_COL].astype(int).values
-    X_train_dir, X_test_dir, y_train_dir, y_test_dir, SPLIT_DATE = time_split_by_quantile(
-        news, X, y_dir, ts_col='published_at', test_frac=0.2
-    )
-    mask_time = pd.Series(news['published_at'] < SPLIT_DATE, index=news.index)
-    mask_test_series = ~mask_time
-else:
-    train_mask_all = split_info['train_mask']
-    test_mask_all = split_info['test_mask']
-    purge_mask_all = split_info['purge_mask']
-    valid_mask = ~purge_mask_all
-    purge_count = int((~valid_mask).sum())
-    if purge_count > 0:
-        logging.info(f"Blocked split purge removed {purge_count} events between train/test blocks")
-    if not valid_mask.all():
-        news = news.loc[valid_mask].reset_index(drop=True)
-        X = X.loc[valid_mask].reset_index(drop=True)
-        y_mag = y_mag[valid_mask]
-        train_mask_all = train_mask_all[valid_mask]
-        test_mask_all = test_mask_all[valid_mask]
-    y_dir = news[LABEL_COL].astype(int).values
-    SPLIT_DATE = split_info['split_date']
-    mask_time = pd.Series(train_mask_all.astype(bool), index=news.index)
-    mask_test_series = ~mask_time
-    logging.info(
-        "Blocked split freq=W-MON train_periods=%s test_periods=%s purge=%s",
-        split_info['train_periods'], split_info['test_periods'], split_info['purge_periods']
-    )
-    X_train_dir = X.loc[mask_time].copy()
-    X_test_dir = X.loc[mask_test_series].copy()
-    y_train_dir = y_dir[mask_time.to_numpy()]
-    y_test_dir = y_dir[mask_test_series.to_numpy()]
-
-if split_info is None:
-    mask_test_series = ~mask_time
-
-overall_counts = np.bincount(y_dir, minlength=3)
-overall_share = (overall_counts / overall_counts.sum()).round(4).tolist() if overall_counts.sum() > 0 else []
-logging.info(
-    "Overall class distribution after filtering: counts=%s share=%s",
-    overall_counts.tolist(), overall_share
+X_train_dir, X_test_dir, y_train_dir, y_test_dir, SPLIT_DATE = time_split_by_quantile(
+    news, X, y_dir, ts_col='published_at', test_frac=0.2
 )
+mask_time = (news['published_at'] < SPLIT_DATE)
 
-fx_test_mask = (news.loc[mask_test_series, 'fx_weight'] >= 1.0).to_numpy()
-
-# === FX-only training mask (после фильтрации стоковых сводок) ===
-fx_train_mask = mask_time
+# === FX-only training mask (исключаем стоковые сводки ТОЛЬКО из train) ===
+fx_train_mask = mask_time & (~news['is_stock'].astype(bool))
 
 # трейн/лейблы по отфильтрованному train
 X_train_dir = X.loc[fx_train_mask].copy()
-y_train_dir = y_dir[fx_train_mask.to_numpy()]
+y_train_dir = y_dir[fx_train_mask]
 
 # веса классов на урезанном трейне
 from sklearn.utils.class_weight import compute_class_weight
@@ -732,14 +607,9 @@ w_train *= (len(w_train) / w_train.sum())
 logging.info("Time split @ %s: train=%d, test=%d", SPLIT_DATE, len(X_train_dir), len(X_test_dir))
 
 
-train_counts = np.bincount(y_train_dir, minlength=3)
-test_counts = np.bincount(y_test_dir, minlength=3)
-train_share = (train_counts / train_counts.sum()).round(4).tolist() if train_counts.sum() > 0 else []
-test_share = (test_counts / test_counts.sum()).round(4).tolist() if test_counts.sum() > 0 else []
+logging.info("Time split @ %s: train=%d, test=%d", SPLIT_DATE, len(X_train_dir), len(X_test_dir))
 logging.info("Class balance (train): %s", Counter(y_train_dir))
-logging.info("Class share (train): %s", train_share)
 logging.info("Class balance (test): %s", Counter(y_test_dir))
-logging.info("Class share (test): %s", test_share)
 
 maj = pd.Series(y_train_dir).mode()[0]
 base_acc = (y_test_dir == maj).mean()
@@ -785,13 +655,18 @@ logging.info(f"Avg probs (raw p0,p1,p2): {np.round(ens_probs_raw.mean(axis=0),4)
 
 
 # Прогнозы вероятностей (как в V18 — 2 модели)
+# === Приор-калибровка + лёгкий биас к 2, консервативнее к 0 ===
 train_counts = np.bincount(y_train_dir, minlength=3)
 train_priors = train_counts / train_counts.sum()
 
-# Калибровку и биас отключаем — берём «сырые» вероятности
-alpha = np.ones_like(train_priors)
-bias = np.ones_like(train_priors)
-ens_probs = ens_probs_raw.copy()
+TEMP = 0.15
+alpha = (train_priors.mean() / np.clip(train_priors, 1e-6, 1.0)) ** TEMP
+ens_probs = ens_probs_raw * alpha
+ens_probs = ens_probs / ens_probs.sum(axis=1, keepdims=True)
+
+bias = np.array([0.98, 1.00, 1.12])  # чуть душим 0, поддерживаем 2
+ens_probs = ens_probs * bias
+ens_probs = ens_probs / ens_probs.sum(axis=1, keepdims=True)
 
 # Марджины: 2 пускаем легче, 0 — строже
 p0, p1, p2 = ens_probs[:, 0], ens_probs[:, 1], ens_probs[:, 2]
@@ -802,8 +677,8 @@ ens_pred = np.where(
     np.where((p0 - p1) >= MARGIN_0, 0, np.argmax(ens_probs, axis=1))
 )
 
-logging.info(f"Train priors: {np.round(train_priors,4).tolist()}, alpha disabled")
-logging.info(f"Avg probs (raw p0,p1,p2): {np.round(ens_probs.mean(axis=0),4).tolist()}")
+logging.info(f"Train priors: {np.round(train_priors,4).tolist()}, alpha: {np.round(alpha,3).tolist()}")
+logging.info(f"Avg probs (calibrated p0,p1,p2): {np.round(ens_probs.mean(axis=0),4).tolist()}")
 logging.info(f"Pred counts (adj+margin): {np.bincount(ens_pred, minlength=3).tolist()}")
 
 
@@ -813,21 +688,7 @@ logging.info("\n" + classification_report(y_test_dir, ens_pred, digits=3, zero_d
 
 acc = accuracy_score(y_test_dir, ens_pred)
 f1  = f1_score(y_test_dir, ens_pred, average='macro', zero_division=0)
-with np.errstate(divide='ignore', invalid='ignore'):
-    recalls = np.where(cm.sum(axis=1) > 0, cm.diagonal() / cm.sum(axis=1), 0.0)
-recall2 = float(recalls[2]) if len(recalls) > 2 else 0.0
-logging.info(f"Per-class recall: {np.round(recalls,3).tolist()}")
 logging.info(f"Ensemble (RF+XGB) direction: acc={acc:.4f} f1={f1:.4f}")
-
-if fx_test_mask.sum() > 0:
-    acc_fx = accuracy_score(y_test_dir[fx_test_mask], ens_pred[fx_test_mask])
-    f1_fx = f1_score(y_test_dir[fx_test_mask], ens_pred[fx_test_mask], average='macro', zero_division=0)
-    logging.info(
-        "FX-only subset: n=%d share=%6.2f%% acc=%.4f macroF1=%.4f",
-        fx_test_mask.sum(), fx_test_mask.mean() * 100.0, acc_fx, f1_fx
-    )
-else:
-    logging.info("FX-only subset: no FX-weighted events in test")
 
 # ===== 2-stage: MOVE (есть движение?) -> DIRECTION (down/up на движениях) =====
 
@@ -839,7 +700,7 @@ from xgboost import XGBClassifier as XGBc
 
 # обучаем move-классификатор на FX-only трейне
 X_train_move = X.loc[fx_train_mask].copy()
-y_train_move = y_move[fx_train_mask.to_numpy()]
+y_train_move = y_move[fx_train_mask]
 
 move_clf = XGBc(
     n_estimators=300, max_depth=4, learning_rate=0.08,
@@ -847,9 +708,10 @@ move_clf = XGBc(
     eval_metric='logloss', nthread=-1
 )
 
+from sklearn.utils.class_weight import compute_class_weight
 
 X_train_move = X.loc[fx_train_mask].copy()
-y_train_move = y_move[fx_train_mask.to_numpy()]
+y_train_move = y_move[fx_train_mask]
 
 cw_move_vals = compute_class_weight('balanced', classes=np.array([0,1]), y=y_train_move)
 cw_move = {0: cw_move_vals[0], 1: cw_move_vals[1]}
@@ -879,8 +741,8 @@ dir2_xgb = XGBc(
 dir2_xgb.fit(X_train_dir2, y_train_dir2)
 
 # инференс 3-классов: если движения нет -> 1 (нейтраль); если есть -> 0/2 по бинарному направлению
-MOVE_GATE_2STAGE = 0.60
-move_yes = (p_move_test >= MOVE_GATE_2STAGE)
+MOVE_GATE = 0.60  # ручка 1
+move_yes = (p_move_test >= MOVE_GATE)
 
 p_dir2 = np.zeros((len(X_test_dir), 2))
 if move_yes.any():
@@ -908,153 +770,28 @@ for thr in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]:
     cov = mask.mean()
     logging.info(f"Conf>={thr:.2f}: coverage={cov:6.2%} n={mask.sum():3d} acc={acc_t:.3f} f1={f1_t:.3f}")
 
-logging.info("\n=== Trade gate (FX-only) ===")
+logging.info("\n=== Trade gate: conf>=0.65 + p_move>=0.60 + margin>=0.05 (FX-only) ===")
+fx_test_mask = (news.loc[~mask_time, 'fx_weight'] >= 1.0).to_numpy()
 
-CONF_GATE = 0.72
-MOVE_GATE_TRADE = 0.68
-MARGIN_GATE = 0.10
-logging.info(
-    f"Trade gate thresholds: conf>={CONF_GATE:.2f}, p_move>={MOVE_GATE_TRADE:.2f}, margin>={MARGIN_GATE:.2f}"
-)
+CONF_GATE = 0.65
+MOVE_GATE = 0.60
 
 # Защита от «ножа»: разница между 1-й и 2-й вероятностью
 top2 = np.sort(ens_probs, axis=1)[:, -2:]
-margin_gap = top2[:, 1] - top2[:, 0]
+margin_gap = top2[:,1] - top2[:,0]
 
-trade_mask = (
-    (conf >= CONF_GATE)
-    & (p_move_test >= MOVE_GATE_TRADE)
-    & (margin_gap >= MARGIN_GATE)
-    & fx_test_mask
-)
+trade_mask = (conf >= CONF_GATE) & (p_move_test >= MOVE_GATE) & (margin_gap >= 0.05) & fx_test_mask
 
-cov_trade = trade_mask.mean()
 if trade_mask.sum() == 0:
-    logging.info("Trade gate: no predictions passed thresholds (coverage=0.00%)")
-    trade_acc = np.nan
-    trade_f1 = np.nan
+    logging.info("Trade gate: no predictions passed thresholds")
 else:
     acc_trade = accuracy_score(y_test_dir[trade_mask], ens_pred_2stage[trade_mask])
     f1_trade  = f1_score(y_test_dir[trade_mask], ens_pred_2stage[trade_mask], average='macro', zero_division=0)
-    cov_trade_fx = trade_mask.sum() / fx_test_mask.sum() if fx_test_mask.sum() > 0 else 0.0
+    cov_trade = trade_mask.mean()
     logging.info(
-        f"Trade gate coverage_total={cov_trade:6.2%} coverage_fx={cov_trade_fx:6.2%} n={trade_mask.sum():3d} "
-        f"acc={acc_trade:.3f} macroF1={f1_trade:.3f}"
+        f"Trade gate coverage={cov_trade:6.2%} n={trade_mask.sum():3d} "
+        f"acc={acc_trade:.3f} f1={f1_trade:.3f}"
     )
-    trade_acc = acc_trade
-    trade_f1 = f1_trade
-
-trade_cov = cov_trade
-
-meets_overall = (f1 >= 0.40) or (recall2 >= 0.30)
-meets_gate = (trade_cov >= 0.10) and (not np.isnan(trade_acc)) and (trade_acc >= 0.55)
-logging.info(
-    "Acceptance check: overall_ok=%s (macroF1=%.3f, recall2=%.3f) trade_ok=%s (cov=%.3f acc=%s)",
-    meets_overall, f1, recall2, meets_gate, trade_cov, None if np.isnan(trade_acc) else f"{trade_acc:.3f}"
-)
-
-if not (meets_overall and meets_gate):
-    logging.info("Criteria not met -> scanning threshold/gate grid (no retraining, what-if analysis)")
-    vol_test_arr = news.loc[mask_test_series, 'volatility_pre_15m'].to_numpy()
-    delta_test_arr = news.loc[mask_test_series, 'delta_pips'].to_numpy()
-    if delta_test_arr.size == 0:
-        logging.info("Grid search skipped: no test events available")
-    else:
-        vol_median = np.nanmedian(vol_test_arr) if np.isnan(vol_test_arr).any() else None
-        if vol_median is not None:
-            if np.isnan(vol_median):
-                vol_median = 0.0
-            vol_test_filled = np.where(np.isnan(vol_test_arr), vol_median, vol_test_arr)
-        else:
-            vol_test_filled = vol_test_arr
-
-        grids = {
-            'thr_min': [1.6, 1.8, 2.0],
-            'thr_coeff': [0.55, 0.60, 0.70],
-            'conf': [0.70, 0.75, 0.80],
-            'move': [0.60, 0.65, 0.70, 0.75],
-            'margin': [0.05, 0.10, 0.15],
-        }
-
-        best = None
-        for thr_min_g in grids['thr_min']:
-            for thr_coeff_g in grids['thr_coeff']:
-                thr_alt = np.maximum(thr_min_g, thr_coeff_g * vol_test_filled)
-                y_true_alt = np.where(
-                    delta_test_arr > thr_alt, 2,
-                    np.where(delta_test_arr < -thr_alt, 0, 1)
-                ).astype(int)
-                cm_alt = confusion_matrix(y_true_alt, ens_pred, labels=[0, 1, 2])
-                f1_alt = f1_score(y_true_alt, ens_pred, average='macro', zero_division=0)
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    recalls_alt = np.where(cm_alt.sum(axis=1) > 0, cm_alt.diagonal() / cm_alt.sum(axis=1), 0.0)
-                recall2_alt = float(recalls_alt[2]) if len(recalls_alt) > 2 else 0.0
-
-                for conf_g in grids['conf']:
-                    for move_g in grids['move']:
-                        for margin_g in grids['margin']:
-                            trade_mask_alt = (
-                                (conf >= conf_g)
-                                & (p_move_test >= move_g)
-                                & (margin_gap >= margin_g)
-                                & fx_test_mask
-                            )
-                            cov_alt = trade_mask_alt.mean()
-                            if trade_mask_alt.sum() > 0:
-                                acc_trade_alt = accuracy_score(
-                                    y_true_alt[trade_mask_alt],
-                                    ens_pred_2stage[trade_mask_alt]
-                                )
-                                f1_trade_alt = f1_score(
-                                    y_true_alt[trade_mask_alt],
-                                    ens_pred_2stage[trade_mask_alt],
-                                    average='macro', zero_division=0
-                                )
-                            else:
-                                acc_trade_alt = np.nan
-                                f1_trade_alt = np.nan
-
-                            meets_main_alt = (f1_alt >= 0.40) or (recall2_alt >= 0.30)
-                            meets_gate_alt = (
-                                (cov_alt >= 0.10)
-                                and (not np.isnan(acc_trade_alt))
-                                and (acc_trade_alt >= 0.55)
-                            )
-                            score = f1_alt + 0.1 * recall2_alt + (0.05 * cov_alt)
-                            if not np.isnan(acc_trade_alt):
-                                score += 0.05 * acc_trade_alt
-
-                            candidate = {
-                                'thr_min': thr_min_g,
-                                'thr_coeff': thr_coeff_g,
-                                'conf': conf_g,
-                                'move': move_g,
-                                'margin': margin_g,
-                                'f1': f1_alt,
-                                'recall2': recall2_alt,
-                                'cov': cov_alt,
-                                'acc_trade': acc_trade_alt,
-                                'f1_trade': f1_trade_alt,
-                                'meets_main': meets_main_alt,
-                                'meets_gate': meets_gate_alt,
-                                'score': score,
-                            }
-
-                            if (best is None) or (candidate['score'] > best['score']):
-                                best = candidate
-
-        if best is not None:
-            logging.info(
-                "Best grid combo: thr_min=%.2f thr_coeff=%.2f conf=%.2f move=%.2f margin=%.2f | "
-                "f1=%.3f recall2=%.3f cov=%.3f acc_trade=%s f1_trade=%s main_ok=%s gate_ok=%s",
-                best['thr_min'], best['thr_coeff'], best['conf'], best['move'], best['margin'],
-                best['f1'], best['recall2'], best['cov'],
-                'nan' if np.isnan(best['acc_trade']) else f"{best['acc_trade']:.3f}",
-                'nan' if np.isnan(best['f1_trade']) else f"{best['f1_trade']:.3f}",
-                best['meets_main'], best['meets_gate']
-            )
-        else:
-            logging.info("Grid search did not evaluate any combination")
 
 # === НОВОЕ: Диагностика по типам событий ===
 logging.info("\n=== Performance by event type (top 10) ===")
