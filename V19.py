@@ -61,7 +61,7 @@ MAX_EVENTS_PER_TIMESTAMP: int | None = 60    # мягкий кап на собы
 # --- Data split (train/test)
 SPLIT_MODE: str = "events"       # режим сплита: events | periods | quantile
 SPLIT_FREQ: str = "D"            # частота агрегации для сплита по периодам/событиям
-TEST_EVENT_FRAC: float = 0.12     # доля событий в тесте для режима events
+TEST_EVENT_FRAC: float = 0.15     # доля событий в тесте для режима events
 TEST_PERIOD_FRAC: float = 0.20    # доля периодов в тесте для режима periods
 PURGE_PERIODS: int = 0            # санитарная зона между train и test в периодах
 
