@@ -724,7 +724,7 @@ def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_pe
         logging.warning("Event share split: not enough periods for blocked split")
         return None
 
-    period_series = periods.to_series(index=df_ts.index)
+    period_series = periods
     period_counts = period_series.value_counts().reindex(unique_periods, fill_value=0)
     total_events = int(period_counts.sum())
     if total_events == 0:
@@ -760,10 +760,9 @@ def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_pe
         logging.warning("Event share split: train set would be empty")
         return None
 
-    periods_series = periods.sort_index()
-    mask_train = periods_series.isin(train_periods)
-    mask_test = periods_series.isin(test_periods)
-    mask_purge = periods_series.isin(purge_zone)
+    mask_train = period_series.isin(train_periods)
+    mask_test = period_series.isin(test_periods)
+    mask_purge = period_series.isin(purge_zone)
 
     split_date = pd.Timestamp(test_periods[0].start_time)
 
