@@ -17,9 +17,9 @@ from sklearn.metrics import accuracy_score, f1_score, mean_squared_error
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier, XGBRegressor
-from imblearn.ensemble import BalancedRandomForestClassifier
 import joblib
 import pandas_ta as ta
+import re
 
 # ================== CONFIG ==================
 PROGRAM_DIR   = '/home/ilyamus/GPTGROKWORK'
@@ -161,6 +161,24 @@ news['event_key'] = [
     build_event_key(cat, country) for cat, country in zip(news['categories'], news['tags'])
 ]
 news['year'] = news['published_at'].dt.year
+
+# маркер фондовых сводок (уберём их из ОБУЧЕНИЯ, но оставим в тесте для честной оценки)
+news['is_stock'] = news['event_key'].str.startswith(('te_stock_market_', 'te_stocks_')).astype(int)
+
+
+# FX-релевантность: поднимем вес явных FX и ослабим стоковые сводки
+ek = news['event_key'].astype(str).str.lower()
+FX_KEYS = (
+    'euro area','eurozone','united states','germany','france','ecb',
+    'federal reserve','interest rate','inflation','cpi','pmi',
+    'employment','jobs','unemployment','gdp','retail sales'
+)
+is_fxish = ek.apply(lambda s: any(k in s for k in FX_KEYS))
+
+news['fx_weight'] = 1.0
+news.loc[is_fxish, 'fx_weight'] = 1.25
+news.loc[news['is_stock'] == 1, 'fx_weight'] = 0.75
+
 
 # Фильтр свалок
 cnt_per_ts = news.groupby('published_at').size()
@@ -352,6 +370,12 @@ logging.info("Building features...")
 news['hour']        = news['published_at'].dt.hour.astype(int)
 news['day_of_week'] = news['published_at'].dt.dayofweek.astype(int)
 
+# сессии (UTC): EU ~ 07–16, US ~ 12–21, только будни
+news['is_weekday']     = (news['day_of_week'] < 5).astype(int)
+news['is_eu_session']  = ((news['hour'] >= 7)  & (news['hour'] <= 16) & (news['is_weekday'] == 1)).astype(int)
+news['is_us_session']  = ((news['hour'] >= 12) & (news['hour'] <= 21) & (news['is_weekday'] == 1)).astype(int)
+
+
 # sentiment
 news['sent_finbert'] = news['sent_finbert'].astype(float).fillna(0.0)
 news['sent_label']   = (news['sent_label'].astype(str).fillna('neu'))
@@ -479,23 +503,32 @@ news['sent_pos_x_accel'] = np.clip(news['sent_finbert'], 0, None) * news['accel_
 
 # ---------- DATASET ----------
 FEATURES = [
-    'hour','day_of_week','event_key_encoded','text_len',
-    'sent_finbert','sent_label_id','sent_pos','sent_neg',
+    # время/сессии
+    'hour','day_of_week','is_weekday','is_eu_session','is_us_session',
+    # ключ события и текст
+    'event_key_encoded','text_len',
+    # сентимент
+    'sent_finbert','sent_label_id','sent_pos','sent_neg','sent_pos_x_accel',
+    # импакт/рынок
     'imp_year_vol',
-    'volatility_pre_15m','RSI_14','SMA_20','ATR_14',
+    'volatility_pre_15m','RSI_14','RSI_high','RSI_low','SMA_20','ATR_14',
     'SMA_365','trend_365',
+    # дневные окна
     'SMA_1M','SMA_3M','SMA_6M','SMA_12M','trend_1M','trend_3M','trend_6M','trend_12M',
     'SMA_3Q','SMA_6Q','SMA_12Q','trend_3Q','trend_6Q','trend_12Q',
+    # корреляции (только агрегат)
     'correlation',
-    'ret_pre_5m','ret_pre_15m','sign_ret15','ret_pre_15m_norm',
-    'accel_5_15','RSI_high','RSI_low','sent_pos_x_accel'
+    # импульсы до новости
+    'ret_pre_5m','ret_pre_15m','sign_ret15','ret_pre_15m_norm','accel_5_15'
 ]
 
-# Выбор разметки: динамика лучше держит сигнал при "новостных пачках"
-USE_DYNAMIC_LABELS = True
+
+# Фиксированная разметка как в V18 (можно потом снова включить динамику)
+USE_DYNAMIC_LABELS = False
 LABEL_COL = 'direction_cls_dyn' if USE_DYNAMIC_LABELS else 'direction_cls'
 MAG_COL   = 'magnitude_pips_dyn' if USE_DYNAMIC_LABELS else 'magnitude_pips'
 
+logging.info(f"Labels: use_dynamic={USE_DYNAMIC_LABELS}, y_col={LABEL_COL}, mag_col={MAG_COL}")
 
 # drop rows with missing target
 news = news.dropna(subset=[LABEL_COL, MAG_COL]).reset_index(drop=True)
@@ -548,52 +581,31 @@ X_train_dir, X_test_dir, y_train_dir, y_test_dir, SPLIT_DATE = time_split_by_qua
 )
 mask_time = (news['published_at'] < SPLIT_DATE)
 
-# веса
+# === FX-only training mask (исключаем стоковые сводки ТОЛЬКО из train) ===
+fx_train_mask = mask_time & (~news['is_stock'].astype(bool))
+
+# трейн/лейблы по отфильтрованному train
+X_train_dir = X.loc[fx_train_mask].copy()
+y_train_dir = y_dir[fx_train_mask]
+
+# веса классов на урезанном трейне
 from sklearn.utils.class_weight import compute_class_weight
 classes = np.unique(y_train_dir)
 class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train_dir)
 cw_map = {c: w for c, w in zip(classes, class_weights)}
 
-# Базовые class_weight + буст одиночек
-w_train = np.array([cw_map[c] for c in y_dir[mask_time]])
-w_train = w_train * np.clip(news.loc[mask_time, 'singleton_boost'].to_numpy(), 1.0, 1.3)
-
-# Усиление краёв (down/up важнее "нейтрали")
-class_boost = {0: 1.6, 1: 1.0, 2: 1.4}
+w_train = np.array([cw_map[c] for c in y_train_dir])
+# буст одиночек + FX-вес
+w_train *= np.clip(news.loc[fx_train_mask, 'singleton_boost'].to_numpy(), 1.0, 1.3)
+w_train *= news.loc[fx_train_mask, 'fx_weight'].to_numpy()
+# дополнительный буст на краях: помогаем UP-классу
+class_boost = {0: 1.35, 1: 1.00, 2: 2.10}
 w_train *= np.vectorize(class_boost.get)(y_train_dir)
+# нормализация, чтобы веса не «задушили» обучение
+w_train *= (len(w_train) / w_train.sum())
 
-# Нормализация, чтобы веса не "душили" обучение
-w_train = w_train * (len(w_train) / w_train.sum())
+logging.info("Time split @ %s: train=%d, test=%d", SPLIT_DATE, len(X_train_dir), len(X_test_dir))
 
-# Лёгкий оверсемплинг до max класса (без SMOTE — просто resample)
-from sklearn.utils import resample
-X_tr, y_tr, w_tr = X_train_dir.copy(), y_train_dir.copy(), w_train.copy()
-counts = np.bincount(y_tr, minlength=3)
-target_n = counts.max()
-X_parts, y_parts, w_parts = [], [], []
-for cls in [0, 1, 2]:
-    m = (y_tr == cls)
-    X_c, y_c, w_c = X_tr[m], y_tr[m], w_tr[m]
-    if len(y_c) == 0:
-        continue
-    if len(y_c) < target_n:
-        X_res, y_res, w_res = resample(
-            X_c, y_c, w_c,
-            replace=True,
-            n_samples=target_n,
-            random_state=42
-        )
-    else:
-        X_res, y_res, w_res = X_c, y_c, w_c
-    X_parts.append(X_res)
-    y_parts.append(y_res)
-    w_parts.append(w_res)
-
-X_train_bal = pd.concat(X_parts, axis=0).reset_index(drop=True)
-y_train_bal = np.concatenate(y_parts)
-w_train_bal = np.concatenate(w_parts)
-
-logging.info(f"Oversampling to max class: before={counts.tolist()}, after={np.bincount(y_train_bal, minlength=3).tolist()}")
 
 logging.info("Time split @ %s: train=%d, test=%d", SPLIT_DATE, len(X_train_dir), len(X_test_dir))
 logging.info("Class balance (train): %s", Counter(y_train_dir))
@@ -607,74 +619,66 @@ logging.info("Baseline (majority=%s) acc=%.4f", maj, base_acc)
 logging.info("Train RandomForest (direction)...")
 rf_clf = RandomForestClassifier(
     n_estimators=300, max_depth=16, min_samples_split=20,
-    random_state=42, n_jobs=-1
+    random_state=42, n_jobs=-1, class_weight=None
 )
-rf_clf.fit(X_train_bal, y_train_bal, sample_weight=w_train_bal)
+rf_clf.fit(X_train_dir, y_train_dir, sample_weight=w_train)
+
 
 logging.info("GridSearch XGBClassifier (direction)...")
 xgb_clf = XGBClassifier(random_state=42, eval_metric='mlogloss', nthread=-1)
 param_grid_xgb = {
-    'n_estimators': [200, 300, 400],
-    'learning_rate': [0.03, 0.05, 0.1],
-    'max_depth': [3, 4, 6],
-    'subsample': [0.7, 1.0],
-    'colsample_bytree': [0.7, 1.0]
+    'n_estimators': [200, 300],
+    'learning_rate': [0.05, 0.1],
+    'max_depth': [4, 6]
 }
-
 grid_xgb = GridSearchCV(
     xgb_clf, param_grid_xgb,
-    cv=3, scoring='f1_macro', n_jobs=-1, verbose=0
+    cv=3, scoring='accuracy', n_jobs=-1, verbose=0
 )
-grid_xgb.fit(X_train_bal, y_train_bal, sample_weight=w_train_bal)
+grid_xgb.fit(X_train_dir, y_train_dir, sample_weight=w_train)
 
 best_xgb = grid_xgb.best_estimator_
-best_xgb.fit(X_train_bal, y_train_bal, sample_weight=w_train_bal)
+try:
+    best_xgb.fit(X_train_dir, y_train_dir, sample_weight=w_train)
+except TypeError:
+    best_xgb.fit(X_train_dir, y_train_dir)
 
 logging.info("Best XGB params: %s", grid_xgb.best_params_)
-
-# Balanced RF даёт "голос" редким классам
-brf = BalancedRandomForestClassifier(
-    n_estimators=400, random_state=42, n_jobs=-1, max_depth=None
-)
-brf.fit(X_train_bal, y_train_bal)
-
-# Прогнозы вероятностей
+# === Ensemble raw probs (RF + XGB) ===
 rf_probs  = rf_clf.predict_proba(X_test_dir)
 xgb_probs = best_xgb.predict_proba(X_test_dir)
-
-brf_probs = brf.predict_proba(X_test_dir)
-
-ens_probs_raw = (rf_probs + xgb_probs + brf_probs) / 3.0
+ens_probs_raw = (rf_probs + xgb_probs) / 2.0
 pred_raw = ens_probs_raw.argmax(axis=1)
+
 logging.info(f"Pred counts (raw): {np.bincount(pred_raw, minlength=3).tolist()}")
 logging.info(f"Avg probs (raw p0,p1,p2): {np.round(ens_probs_raw.mean(axis=0),4).tolist()}")
 
-# === Prior correction (анти-коллапс в "1") ===
+
+# Прогнозы вероятностей (как в V18 — 2 модели)
+# === Приор-калибровка + лёгкий биас к 2, консервативнее к 0 ===
 train_counts = np.bincount(y_train_dir, minlength=3)
 train_priors = train_counts / train_counts.sum()
-TEMP = 0.45
-alpha = (train_priors.mean() / np.clip(train_priors, 1e-6, 1.0)) ** TEMP
 
+TEMP = 0.15
+alpha = (train_priors.mean() / np.clip(train_priors, 1e-6, 1.0)) ** TEMP
 ens_probs = ens_probs_raw * alpha
 ens_probs = ens_probs / ens_probs.sum(axis=1, keepdims=True)
 
-# Дополнительный биас: мягко подтолкнуть экстремальные классы
-bias = np.array([1.05, 1.0, 1.18])
+bias = np.array([0.98, 1.00, 1.12])  # чуть душим 0, поддерживаем 2
 ens_probs = ens_probs * bias
 ens_probs = ens_probs / ens_probs.sum(axis=1, keepdims=True)
 
-logging.info(f"Train priors: {np.round(train_priors,4).tolist()}, alpha: {np.round(alpha,3).tolist()}")
-logging.info("Applied post-ensemble bias (p0×1.05, p2×1.18)")
-logging.info(f"Avg probs (adj p0,p1,p2): {np.round(ens_probs.mean(axis=0),4).tolist()}")
-
-# === Margin rule: асимметрия для ап/даун движений
+# Марджины: 2 пускаем легче, 0 — строже
 p0, p1, p2 = ens_probs[:, 0], ens_probs[:, 1], ens_probs[:, 2]
-MARGIN_2 = 0.025
-MARGIN_0 = 0.07
+MARGIN_2 = 0.02
+MARGIN_0 = 0.06
 ens_pred = np.where(
     (p2 - p1) >= MARGIN_2, 2,
     np.where((p0 - p1) >= MARGIN_0, 0, np.argmax(ens_probs, axis=1))
 )
+
+logging.info(f"Train priors: {np.round(train_priors,4).tolist()}, alpha: {np.round(alpha,3).tolist()}")
+logging.info(f"Avg probs (calibrated p0,p1,p2): {np.round(ens_probs.mean(axis=0),4).tolist()}")
 logging.info(f"Pred counts (adj+margin): {np.bincount(ens_pred, minlength=3).tolist()}")
 
 
@@ -684,7 +688,74 @@ logging.info("\n" + classification_report(y_test_dir, ens_pred, digits=3, zero_d
 
 acc = accuracy_score(y_test_dir, ens_pred)
 f1  = f1_score(y_test_dir, ens_pred, average='macro', zero_division=0)
-logging.info(f"Ensemble (RF+XGB+BRF) direction: acc={acc:.4f} f1={f1:.4f}")
+logging.info(f"Ensemble (RF+XGB) direction: acc={acc:.4f} f1={f1:.4f}")
+
+# ===== 2-stage: MOVE (есть движение?) -> DIRECTION (down/up на движениях) =====
+
+# 1) бинарная метка «есть движение» по твоему же thr
+news['is_move'] = (np.abs(news['delta_pips']) > thr).astype(int)
+y_move = news['is_move'].values
+
+from xgboost import XGBClassifier as XGBc
+
+# обучаем move-классификатор на FX-only трейне
+X_train_move = X.loc[fx_train_mask].copy()
+y_train_move = y_move[fx_train_mask]
+
+move_clf = XGBc(
+    n_estimators=300, max_depth=4, learning_rate=0.08,
+    subsample=0.9, colsample_bytree=0.9, random_state=42,
+    eval_metric='logloss', nthread=-1
+)
+
+from sklearn.utils.class_weight import compute_class_weight
+
+X_train_move = X.loc[fx_train_mask].copy()
+y_train_move = y_move[fx_train_mask]
+
+cw_move_vals = compute_class_weight('balanced', classes=np.array([0,1]), y=y_train_move)
+cw_move = {0: cw_move_vals[0], 1: cw_move_vals[1]}
+
+w_move = np.array([cw_move[int(c)] for c in y_train_move])
+
+move_clf = XGBc(
+    n_estimators=300, max_depth=4, learning_rate=0.08,
+    subsample=0.9, colsample_bytree=0.9, random_state=42,
+    eval_metric='logloss', nthread=-1
+)
+move_clf.fit(X_train_move, y_train_move, sample_weight=w_move)
+
+# вероятности движения на тесте
+p_move_test = move_clf.predict_proba(X_test_dir)[:, 1]
+
+# 2) направление ТОЛЬКО на движущихся событиях в трейне (0=down, 1=up)
+is_moving_train = (news['is_move'] == 1) & fx_train_mask
+X_train_dir2 = X.loc[is_moving_train].copy()
+y_train_dir2 = (news.loc[is_moving_train, 'delta_pips'] > 0).astype(int).values
+
+dir2_xgb = XGBc(
+    n_estimators=400, max_depth=5, learning_rate=0.06,
+    subsample=0.9, colsample_bytree=0.9, random_state=42,
+    eval_metric='logloss', nthread=-1
+)
+dir2_xgb.fit(X_train_dir2, y_train_dir2)
+
+# инференс 3-классов: если движения нет -> 1 (нейтраль); если есть -> 0/2 по бинарному направлению
+MOVE_GATE = 0.60  # ручка 1
+move_yes = (p_move_test >= MOVE_GATE)
+
+p_dir2 = np.zeros((len(X_test_dir), 2))
+if move_yes.any():
+    p_dir2[move_yes] = dir2_xgb.predict_proba(X_test_dir[move_yes])
+
+ens_pred_2stage = np.full(len(X_test_dir), 1, dtype=int)  # default neutral
+ens_pred_2stage[move_yes] = np.where(p_dir2[move_yes, 1] >= 0.5, 2, 0)
+
+cm2  = confusion_matrix(y_test_dir, ens_pred_2stage, labels=[0,1,2])
+acc2 = accuracy_score(y_test_dir, ens_pred_2stage)
+f12  = f1_score(y_test_dir, ens_pred_2stage, average='macro', zero_division=0)
+logging.info("\n[2-stage] Confusion (0,1,2 rows vs cols):\n%s", cm2)
+logging.info("[2-stage] acc=%.4f macroF1=%.4f move_cov=%.2f", acc2, f12, move_yes.mean())
 
 # === НОВОЕ: Анализ уверенности модели (торгуем только confident predictions) ===
 logging.info("\n=== Confidence-based filtering ===")
@@ -699,17 +770,23 @@ for thr in [0.50, 0.55, 0.60, 0.65, 0.70, 0.75]:
     cov = mask.mean()
     logging.info(f"Conf>={thr:.2f}: coverage={cov:6.2%} n={mask.sum():3d} acc={acc_t:.3f} f1={f1_t:.3f}")
 
-logging.info("\n=== Trade gate: conf>=0.70 + class-specific cutoffs ===")
-trade_mask = (conf >= 0.70) & (
-    ((ens_pred == 2) & (p2 >= 0.40)) |
-    ((ens_pred == 0) & (p0 >= 0.45)) |
-    (ens_pred == 1)
-)
+logging.info("\n=== Trade gate: conf>=0.65 + p_move>=0.60 + margin>=0.05 (FX-only) ===")
+fx_test_mask = (news.loc[~mask_time, 'fx_weight'] >= 1.0).to_numpy()
+
+CONF_GATE = 0.65
+MOVE_GATE = 0.60
+
+# Защита от «ножа»: разница между 1-й и 2-й вероятностью
+top2 = np.sort(ens_probs, axis=1)[:, -2:]
+margin_gap = top2[:,1] - top2[:,0]
+
+trade_mask = (conf >= CONF_GATE) & (p_move_test >= MOVE_GATE) & (margin_gap >= 0.05) & fx_test_mask
+
 if trade_mask.sum() == 0:
     logging.info("Trade gate: no predictions passed thresholds")
 else:
-    acc_trade = accuracy_score(y_test_dir[trade_mask], ens_pred[trade_mask])
-    f1_trade  = f1_score(y_test_dir[trade_mask], ens_pred[trade_mask], average='macro', zero_division=0)
+    acc_trade = accuracy_score(y_test_dir[trade_mask], ens_pred_2stage[trade_mask])
+    f1_trade  = f1_score(y_test_dir[trade_mask], ens_pred_2stage[trade_mask], average='macro', zero_division=0)
     cov_trade = trade_mask.mean()
     logging.info(
         f"Trade gate coverage={cov_trade:6.2%} n={trade_mask.sum():3d} "
@@ -755,11 +832,29 @@ for idx, row in event_stats.tail(10).iterrows():
         f"avg_delta_dyn={row['avg_delta_dyn']:+.2f} "
         f"avg_mag={row['avg_magnitude']:.2f}"
     )
-    
+
+logging.info("\n=== FX-only performance (event types, top 10) ===")
+fx_only = test_news[test_news['fx_weight'] >= 1.0]
+fx_stats = fx_only.groupby('event_key').agg({
+    'correct': ['sum','count','mean'],
+    'delta_pips': 'mean',
+}).round(3)
+if not fx_stats.empty:
+    fx_stats.columns = ['correct','total','accuracy','avg_delta']
+    fx_stats = fx_stats[fx_stats['total'] >= 3].sort_values('accuracy', ascending=False)
+    for idx, row in fx_stats.head(10).iterrows():
+        logging.info(f"  {idx}: acc={row['accuracy']:.3f} ({int(row['correct'])}/{int(row['total'])}) "
+                     f"avg_delta={row['avg_delta']:+.2f}")
+
+
 # save
 
 joblib.dump(rf_clf,   f'{MODEL_DIR}/model_te_direction_rf_15m.pkl')
 joblib.dump(best_xgb, f'{MODEL_DIR}/model_te_direction_xgb_15m.pkl')
+
+joblib.dump(move_clf, f'{MODEL_DIR}/model_te_move_xgb_15m.pkl')
+joblib.dump(dir2_xgb, f'{MODEL_DIR}/model_te_dir2_xgb_15m.pkl')
+
 with open(f'{MODEL_DIR}/features_direction_15m.txt', 'w') as f:
     f.write('\n'.join(FEATURES))
 
@@ -789,8 +884,25 @@ grid_reg.fit(X_train_mag, y_train_mag)
 best_reg = grid_reg.best_estimator_
 logging.info("Best XGBReg params: %s", grid_reg.best_params_)
 
+# Рефит с большим лимитом деревьев; early stopping — по возможности
+best_reg.set_params(n_estimators=min(best_reg.get_params().get('n_estimators', 400)*3, 1500))
+try:
+    best_reg.fit(
+        X_train_mag, y_train_mag,
+        eval_set=[(X_test_mag, y_test_mag)],
+        early_stopping_rounds=50,
+        verbose=False
+    )
+except TypeError:
+    best_reg.fit(
+        X_train_mag, y_train_mag,
+        eval_set=[(X_test_mag, y_test_mag)],
+        verbose=False
+    )
+
 y_pred_test = best_reg.predict(X_test_mag)
 rmse = np.sqrt(mean_squared_error(np.expm1(y_test_mag), np.expm1(y_pred_test)))
+
 logging.info(f"RMSE magnitude (pips) @+{TIMEFRAME_FWD}m: {rmse:.4f}")
 
 joblib.dump(best_reg, f'{MODEL_DIR}/model_te_magnitude_xgb_15m.pkl')
