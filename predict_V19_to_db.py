@@ -36,33 +36,25 @@ MODEL_DIR = "/home/ilyamus/GPTGROKWORK/AITrainer_V5"
 FALLBACK_MODEL_DIR = "/home/ilyamus/GPTGROKWORK/AITrainer_V5"
 
 FEATURES: List[str] = [
-    "actual_minus_forecast",
-    "imp_calculated",
-    "imp_trend",
-    "imp_total",
-    "dependence_encoded",
     "hour",
     "day_of_week",
-    "actual",
-    "news_impact",
-    "volatility_pre",
+    "is_weekday",
+    "is_eu_session",
+    "is_us_session",
     "event_key_encoded",
-    "prev_magnitude_1",
-    "prev_direction_1",
-    "prev_magnitude_2",
-    "prev_direction_2",
-    "prev_magnitude_3",
-    "prev_direction_3",
-    "imp_total_category",
+    "text_len",
+    "sent_finbert",
+    "sent_label_id",
+    "sent_pos",
+    "sent_neg",
+    "sent_pos_x_accel",
+    "imp_year_vol",
+    "volatility_pre_15m",
     "RSI_14",
+    "RSI_high",
+    "RSI_low",
     "SMA_20",
-    "time_since_last_event",
     "ATR_14",
-    "correlation",
-    "price_change",
-    "corr_direction",
-    "probability",
-    "observations",
     "SMA_365",
     "trend_365",
     "SMA_1M",
@@ -79,6 +71,12 @@ FEATURES: List[str] = [
     "trend_3Q",
     "trend_6Q",
     "trend_12Q",
+    "correlation",
+    "ret_pre_5m",
+    "ret_pre_15m",
+    "sign_ret15",
+    "ret_pre_15m_norm",
+    "accel_5_15",
 ]
 
 # ===================== LOGGING =====================
@@ -348,7 +346,7 @@ def _compute_volatility(prices: pd.DataFrame, news: pd.DataFrame) -> pd.Series:
         return pd.Series(dtype=float)
     resampled = (
         prices.set_index("timestamp_utc")
-        .resample("15T")
+        .resample("15min")
         .agg({"high": "max", "low": "min"})
         .dropna()
         .reset_index()
@@ -363,6 +361,34 @@ def _compute_volatility(prices: pd.DataFrame, news: pd.DataFrame) -> pd.Series:
         tolerance=pd.Timedelta("1D"),
     )
     return merged["price_range"].fillna(resampled["price_range"].mean()).fillna(0.0)
+
+
+def _lookup_price_offset(
+    prices: pd.DataFrame, timestamps: pd.Series, offset_minutes: int
+) -> pd.Series:
+    if timestamps.empty:
+        return pd.Series(dtype=float)
+
+    lookup_df = pd.DataFrame(
+        {
+            "lookup_ts": timestamps - pd.Timedelta(minutes=offset_minutes),
+            "_orig_index": timestamps.index,
+        }
+    )
+    price_lookup = prices[["timestamp_utc", "close"]].sort_values("timestamp_utc")
+    merged = pd.merge_asof(
+        lookup_df.sort_values("lookup_ts"),
+        price_lookup,
+        left_on="lookup_ts",
+        right_on="timestamp_utc",
+        direction="backward",
+        tolerance=pd.Timedelta("1D"),
+    )
+    merged = merged.set_index("_orig_index")
+    merged = merged.reindex(timestamps.index)
+    return merged["close"].astype(float)
+
+
 
 
 def _prepare_lag_features(news: pd.DataFrame) -> pd.DataFrame:
@@ -416,7 +442,7 @@ def _serialize_extra_json(row: pd.Series, rf_prob: float, xgb_prob: float) -> st
         "thr_mag": FUTURE_MAGNITUDE_THRESHOLD if FUTURE_MODE else HISTORY_MAGNITUDE_THRESHOLD,
         "rf_p_mean": float(rf_prob),
         "xgb_p_mean": float(xgb_prob),
-        "vol_pre": float(row.get("volatility_pre", 0.0)),
+        "vol_pre": float(row.get("volatility_pre_15m", 0.0)),
         "news_impact": float(row.get("news_impact", 0.0)),
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -436,6 +462,55 @@ def _prepare_predictions_df(
     news = news.sort_values("timestamp_utc").reset_index(drop=True)
     news["hour"] = news["timestamp_utc"].dt.hour.astype(int)
     news["day_of_week"] = news["timestamp_utc"].dt.dayofweek.astype(int)
+
+    news["is_weekday"] = (news["day_of_week"] < 5).astype(int)
+    news["is_eu_session"] = (
+        (news["hour"] >= 7)
+        & (news["hour"] <= 16)
+        & (news["is_weekday"] == 1)
+    ).astype(int)
+    news["is_us_session"] = (
+        (news["hour"] >= 12)
+        & (news["hour"] <= 21)
+        & (news["is_weekday"] == 1)
+    ).astype(int)
+
+    if "sent_finbert" in news.columns:
+        news["sent_finbert"] = pd.to_numeric(news["sent_finbert"], errors="coerce").fillna(0.0)
+    else:
+        news["sent_finbert"] = 0.0
+
+    if "sent_label" in news.columns:
+        sent_label = news["sent_label"].astype(str).str.lower().replace("", "neu").fillna("neu")
+    else:
+        sent_label = pd.Series(["neu"] * len(news), index=news.index)
+    news["sent_label"] = sent_label
+    label_map = {"neg": 0, "neu": 1, "pos": 2}
+    news["sent_label_id"] = sent_label.map(label_map).fillna(1).astype(int)
+    news["sent_pos"] = (news["sent_label_id"] == 2).astype(int)
+    news["sent_neg"] = (news["sent_label_id"] == 0).astype(int)
+
+    text_source = None
+    for col in ("text_clean", "text", "description"):
+        if col in news.columns:
+            text_source = news[col]
+            break
+    if text_source is None:
+        news["text_len"] = 0
+    else:
+        text_len = text_source.fillna("").astype(str).str.len()
+        if len(text_len) == 0:
+            news["text_len"] = 0
+        else:
+            clip_value = text_len.quantile(0.99)
+            if pd.isna(clip_value):
+                clip_value = text_len.max()
+            news["text_len"] = text_len.clip(upper=clip_value).astype(int)
+
+    if "imp_year_vol" in news.columns:
+        news["imp_year_vol"] = pd.to_numeric(news["imp_year_vol"], errors="coerce").fillna(0.0)
+    else:
+        news["imp_year_vol"] = 0.0
 
     news["actual_minus_forecast"] = pd.to_numeric(news.get("actual_minus_forecast"), errors="coerce").fillna(0.0)
     news["imp_calculated"] = pd.to_numeric(news.get("imp_calculated"), errors="coerce").fillna(0.0)
@@ -470,7 +545,7 @@ def _prepare_predictions_df(
     ).astype("float").fillna(2.0)
 
     news["news_impact"] = _compute_news_impact(news)
-    news["volatility_pre"] = _compute_volatility(prices, news)
+    news["volatility_pre_15m"] = _compute_volatility(prices, news)
 
     event_encoder = encoders["event"]
     dep_encoder = encoders["dependence"]
@@ -537,7 +612,7 @@ def _prepare_predictions_df(
             if "trend" in col:
                 news[col] = news[col].fillna(0.0)
             else:
-                news[col] = news[col].fillna(method="bfill").fillna(news[col].mean())
+                news[col] = news[col].bfill().fillna(news[col].mean())
         else:
             news[col] = 0.0
 
@@ -559,6 +634,24 @@ def _prepare_predictions_df(
     ].fillna(0.0)
 
     news.rename(columns={"close": "price_entry"}, inplace=True)
+    news["price_entry"] = pd.to_numeric(news["price_entry"], errors="coerce")
+    news["RSI_high"] = (pd.to_numeric(news["RSI_14"], errors="coerce") >= 60).astype(int)
+    news["RSI_low"] = (pd.to_numeric(news["RSI_14"], errors="coerce") <= 40).astype(int)
+
+    price_pre_5 = _lookup_price_offset(prices, news["timestamp_utc"], 5)
+    price_pre_15 = _lookup_price_offset(prices, news["timestamp_utc"], 15)
+    price_pre_5 = price_pre_5.fillna(news["price_entry"])
+    price_pre_15 = price_pre_15.fillna(news["price_entry"])
+    pip_factor = 10000.0
+    news["ret_pre_5m"] = ((news["price_entry"] - price_pre_5) * pip_factor).fillna(0.0)
+    news["ret_pre_15m"] = ((news["price_entry"] - price_pre_15) * pip_factor).fillna(0.0)
+    news["sign_ret15"] = np.sign(news["ret_pre_15m"]).astype(int)
+    denom = news["volatility_pre_15m"].replace(0, np.nan)
+    news["ret_pre_15m_norm"] = (
+        news["ret_pre_15m"] / denom
+    ).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    news["accel_5_15"] = news["ret_pre_5m"] - (news["ret_pre_15m"] / 3.0)
+    news["sent_pos_x_accel"] = np.clip(news["sent_finbert"], 0, None) * news["accel_5_15"]
 
     missing_features = [col for col in FEATURES if col not in news.columns]
     if missing_features:
@@ -740,7 +833,7 @@ def main() -> None:
         logging.info("No predictions passed filtering thresholds")
         return
 
-    filtered["price_entry"] = filtered["price_entry"].fillna(method="ffill").fillna(method="bfill").fillna(0.0)
+    filtered["price_entry"] = filtered["price_entry"].ffill().bfill().fillna(0.0)
     filtered["price_exit"] = filtered["price_exit"].fillna(filtered["price_entry"])
 
     to_insert = _prepare_insert_frame(filtered, removed_ids)
