@@ -81,9 +81,9 @@ FEATURES: Sequence[str] = (
 )
 
 MODEL_FILES = {
-    "rf": "model_direction_rf_15min.pkl",
-    "xgb": "model_direction_xgb_15min.pkl",
-    "reg": "model_magnitude_15min.pkl",
+    "rf": "model_te_direction_rf_15m.pkl",
+    "xgb": "model_te_direction_xgb_15m.pkl",
+    "reg": "model_te_magnitude_xgb_15m.pkl",
     "event_encoder": "label_encoder_event_te_15m.pkl",
 }
 
