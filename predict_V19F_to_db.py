@@ -191,13 +191,43 @@ def _resolve_event_column(engine: sqlalchemy.Engine) -> str:
         "Checked: event, event_name, event_title, title, event_text, headline"
     )
 
+def _resolve_event_key_column(engine: sqlalchemy.Engine) -> Optional[str]:
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns("news_tradingeconomics")}
+    for candidate in (
+        "event_key",
+        "eventId",
+        "event_id",
+        "event_code",
+        "eventCode",
+        "key",
+    ):
+        if candidate in columns:
+            if candidate != "event_key":
+                logging.warning(
+                    "Using column '%s' from news_tradingeconomics as event key", candidate
+                )
+            return candidate
+    logging.warning(
+        "Column 'event_key' not found in news_tradingeconomics. Proceeding without event keys."
+    )
+    return None
 
 
 def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     event_column = _resolve_event_column(engine)
     event_select = "event" if event_column == "event" else f"{event_column} AS event"
+    event_key_column = _resolve_event_key_column(engine)
+    if event_key_column is None:
+        event_key_select = "NULL AS event_key"
+    else:
+        event_key_select = (
+            "event_key"
+            if event_key_column == "event_key"
+            else f"{event_key_column} AS event_key"
+        )
     base_query = f"""
-        SELECT id, timestamp_utc, {event_select}, event_key, imp_total, imp_calculated, imp_trend,
+        SELECT id, timestamp_utc, {event_select}, event_key_select, imp_total, imp_calculated, imp_trend,
         direction, magnitude, actual, dependence
         FROM news_tradingeconomics
     """
