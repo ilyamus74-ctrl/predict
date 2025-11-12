@@ -172,7 +172,14 @@ def _prepare_daily_trends(prices: pd.DataFrame) -> pd.DataFrame:
 def _resolve_event_column(engine: sqlalchemy.Engine) -> str:
     inspector = inspect(engine)
     columns = {col["name"] for col in inspector.get_columns("news_tradingeconomics")}
-    for candidate in ("event", "event_name", "event_title", "title", "event_text"):
+    for candidate in (
+        "event",
+        "event_name",
+        "event_title",
+        "title",
+        "event_text",
+        "headline",
+    ):
         if candidate in columns:
             if candidate != "event":
                 logging.warning(
@@ -181,7 +188,7 @@ def _resolve_event_column(engine: sqlalchemy.Engine) -> str:
             return candidate
     raise RuntimeError(
         "Unable to locate an event text column in news_tradingeconomics. "
-        "Checked: event, event_name, event_title, title, event_text"
+        "Checked: event, event_name, event_title, title, event_text, headline"
     )
 
 
