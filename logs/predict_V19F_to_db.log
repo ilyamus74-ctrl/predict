@@ -27,3 +27,35 @@ FileNotFoundError: Label encoders not found in either primary or fallback direct
 2025-11-12 11:43:13,113Z - INFO - Loading direction RF model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
 2025-11-12 11:43:13,398Z - INFO - Loading direction XGB model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
 2025-11-12 11:43:13,449Z - INFO - Loading magnitude regression model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 11:50:05,956Z - INFO - ==== predict_V19F_to_db start ====
+2025-11-12 11:50:06,455Z - INFO - Unique index creation skipped: (mysql.connector.errors.ProgrammingError) 1061 (42000): Duplicate key name 'ux_predictETH5_ts_event_model'
+[SQL: 
+        ALTER TABLE predictETH5
+        ADD UNIQUE KEY ux_predictETH5_ts_event_model (ts_utc, event_key, model_tag)
+        ]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2025-11-12 11:50:06,459Z - INFO - Loading price data starting 2022-01-01
+2025-11-12 11:50:44,866Z - INFO - Price indicators prepared: 1396319 rows
+2025-11-12 11:50:44,913Z - INFO - Removed news ids loaded: 62
+2025-11-12 11:50:44,913Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 11:50:45,619Z - WARNING - No dependence label encoder found in ('label_encoder_dependence_15min.pkl', 'label_encoder_dependence_te_15m.pkl', 'label_encoder_dependence_te_15min.pkl')
+2025-11-12 11:50:45,619Z - WARNING - Dependence label encoder not found; dependence values will be encoded as unknown
+2025-11-12 11:50:45,619Z - INFO - Loading direction RF model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 11:50:46,008Z - INFO - Loading direction XGB model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 11:50:46,065Z - INFO - Loading magnitude regression model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 11:54:26,475Z - INFO - ==== predict_V19F_to_db start ====
+2025-11-12 11:54:27,069Z - INFO - Unique index creation skipped: (mysql.connector.errors.ProgrammingError) 1061 (42000): Duplicate key name 'ux_predictETH5_ts_event_model'
+[SQL: 
+        ALTER TABLE predictETH5
+        ADD UNIQUE KEY ux_predictETH5_ts_event_model (ts_utc, event_key, model_tag)
+        ]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2025-11-12 11:54:27,074Z - INFO - Loading price data starting 2022-01-01
+2025-11-12 11:55:04,330Z - INFO - Price indicators prepared: 1396322 rows
+2025-11-12 11:55:04,372Z - INFO - Removed news ids loaded: 62
+2025-11-12 11:55:04,373Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 11:55:05,113Z - WARNING - No dependence label encoder found in ('label_encoder_dependence_15min.pkl', 'label_encoder_dependence_te_15m.pkl', 'label_encoder_dependence_te_15min.pkl')
+2025-11-12 11:55:05,113Z - WARNING - Dependence label encoder not found; dependence values will be encoded as unknown
+2025-11-12 11:55:05,113Z - INFO - Loading direction RF model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 11:55:05,462Z - INFO - Loading direction XGB model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 11:55:05,508Z - INFO - Loading magnitude regression model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl

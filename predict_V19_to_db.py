@@ -291,10 +291,22 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     return df
 
 
-def _load_correlations(engine: sqlalchemy.Engine, min_ts: datetime, max_ts: datetime, event_keys: Iterable[str]) -> pd.DataFrame:
-    if not event_keys:
+def _load_correlations(
+    engine: sqlalchemy.Engine,
+    min_ts: datetime,
+    max_ts: datetime,
+    event_keys: Iterable[str],
+) -> pd.DataFrame:
+    if event_keys is None:
         return pd.DataFrame()
-    unique_keys = list({ek for ek in event_keys if isinstance(ek, str)})
+
+    event_keys_list = list(event_keys)
+    if not event_keys_list:
+        return pd.DataFrame()
+
+    unique_keys = [
+        ek for ek in {key for key in event_keys_list if isinstance(key, str)} if ek
+    ]
     if not unique_keys:
         return pd.DataFrame()
     query = text(
