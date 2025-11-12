@@ -11,3 +11,19 @@ Traceback (most recent call last):
   File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19_to_db.py", line 119, in _load_encoders
     raise FileNotFoundError("Label encoders not found in either primary or fallback directories")
 FileNotFoundError: Label encoders not found in either primary or fallback directories
+2025-11-12 11:42:36,551Z - INFO - ==== predict_V19F_to_db start ====
+2025-11-12 11:42:36,682Z - INFO - Unique index creation skipped: (mysql.connector.errors.ProgrammingError) 1061 (42000): Duplicate key name 'ux_predictETH5_ts_event_model'
+[SQL: 
+        ALTER TABLE predictETH5
+        ADD UNIQUE KEY ux_predictETH5_ts_event_model (ts_utc, event_key, model_tag)
+        ]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2025-11-12 11:42:36,686Z - INFO - Loading price data starting 2022-01-01
+2025-11-12 11:43:12,394Z - INFO - Price indicators prepared: 1396310 rows
+2025-11-12 11:43:12,443Z - INFO - Removed news ids loaded: 62
+2025-11-12 11:43:12,444Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 11:43:13,113Z - WARNING - No dependence label encoder found in ('label_encoder_dependence_15min.pkl', 'label_encoder_dependence_te_15m.pkl', 'label_encoder_dependence_te_15min.pkl')
+2025-11-12 11:43:13,113Z - WARNING - Dependence label encoder not found; dependence values will be encoded as unknown
+2025-11-12 11:43:13,113Z - INFO - Loading direction RF model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 11:43:13,398Z - INFO - Loading direction XGB model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 11:43:13,449Z - INFO - Loading magnitude regression model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
