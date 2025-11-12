@@ -17,7 +17,7 @@ from sqlalchemy import inspect, text
 FUTURE_MODE = True
 FUTURE_HOURS = 1
 START_DATE = "2024-01-01"
-FUTURE_PAST_MINUTES = 15  # брать ещё последние 10 минут
+FUTURE_PAST_MINUTES = 150  # брать ещё последние 10 минут
 
 DB_CONN = "mysql+mysqlconnector://GPTFOREX:GPtushechkaForexUshechka@localhost/GPTFOREX" 
 
@@ -25,9 +25,9 @@ CURRENCY_PAIR = "EUR/USD"
 MODEL_TAG = "V19F_15m"
 
 # thresholds
-IMP_TOTAL_THRESHOLD = 0.10
-FUTURE_DIRECTION_PROB_THRESHOLD = 0.40
-FUTURE_MAGNITUDE_THRESHOLD = 2.5
+IMP_TOTAL_THRESHOLD = 0.0 #0.10
+FUTURE_DIRECTION_PROB_THRESHOLD = 0.30 #0.40
+FUTURE_MAGNITUDE_THRESHOLD = 1.25 #2.5
 HISTORY_DIRECTION_PROB_THRESHOLD = 0.65
 HISTORY_MAGNITUDE_THRESHOLD = 7.0
 MAGNITUDE_PRIORITY_THRESHOLD = 6.6227
@@ -319,6 +319,8 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     df["timestamp_utc"] = df["timestamp_utc"].dt.round("min")
 
     now_utc = pd.Timestamp.utcnow().floor("min")
+    if now_utc.tzinfo is not None:
+        now_utc = now_utc.tz_localize(None)
     raw_cnt = len(df)
     if FUTURE_MODE:
         start_utc = now_utc - pd.Timedelta(minutes=FUTURE_PAST_MINUTES)
