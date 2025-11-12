@@ -318,16 +318,31 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True).dt.tz_convert(None)
     df["timestamp_utc"] = df["timestamp_utc"].dt.round("min")
 
-
     now_utc = pd.Timestamp.utcnow().floor("min")
+    raw_cnt = len(df)
     if FUTURE_MODE:
+        start_utc = now_utc - pd.Timedelta(minutes=FUTURE_PAST_MINUTES)
         end_utc = now_utc + pd.Timedelta(hours=FUTURE_HOURS)
-        df = df[(df["timestamp_utc"] >= now_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+        df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
     else:
-        df = df[
-            (df["timestamp_utc"] >= pd.to_datetime(START_DATE))
-            & (df["timestamp_utc"] <= now_utc)
-        ].copy()
+        start_utc = pd.to_datetime(START_DATE)
+        end_utc = now_utc
+        df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+    after_time_cnt = len(df)
+
+    if FUTURE_MODE and IMP_TOTAL_THRESHOLD > 0:
+        df = df[df["imp_total"] > IMP_TOTAL_THRESHOLD].copy()
+    after_imp_cnt = len(df)
+
+    logging.info(
+        "news window: raw=%d, after_time=%d, after_imp=%d, time=[%s..%s]",
+        raw_cnt,
+        after_time_cnt,
+        after_imp_cnt,
+        start_utc,
+        end_utc,
+    )
+
 
     for col, default, to_numeric in [
         ("imp_total", 0.0, True),
