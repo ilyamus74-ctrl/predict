@@ -1,10 +1,8 @@
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta
-from hashlib import md5
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -267,6 +265,7 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
             + """
             WHERE timestamp_utc >= UTC_TIMESTAMP() - INTERVAL 3 HOUR
               AND imp_total > :imp_total
+              AND event_key IS NOT NULL
             ORDER BY timestamp_utc
             """
         )
@@ -277,6 +276,7 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
             + """
             WHERE timestamp_utc >= :start
               AND imp_total > 0.1
+              AND event_key IS NOT NULL
             ORDER BY timestamp_utc
             """
         )
@@ -413,31 +413,19 @@ def _round_decimal(series: pd.Series, decimals: int) -> pd.Series:
     return series.apply(lambda x: round(float(x), decimals) if pd.notnull(x) else x)
 
 
-def _normalize_event_text(value: Optional[str]) -> str:
-    if value is None:
-        return ""
-    normalized = re.sub(r"\s+", " ", str(value).strip().lower())
-    return normalized
-
-
-def _event_norm_hash(normalized_event: str) -> str:
-    if not normalized_event:
-        return ""
-    return md5(normalized_event.encode("utf-8")).hexdigest()
-
-
-def _primary_key_for_row(row: pd.Series) -> Tuple[str, datetime, str, str]:
-    ts = row["ts_utc"]
-    model = row["model_tag"]
-    src_id = row.get("src_id")
-    event_key = row.get("event_key")
-    event_norm = _normalize_event_text(row.get("event"))
-    event_hash = _event_norm_hash(event_norm)
-    if pd.notnull(src_id):
-        return ("src_id", ts, str(int(src_id)), model)
-    if pd.notnull(event_key):
-        return ("event_key", ts, str(event_key), model)
-    return ("event_norm", ts, event_hash, model)
+def _attempt_create_unique_index(engine: sqlalchemy.Engine) -> None:
+    ddl = text(
+        """
+        ALTER TABLE predictETH5
+        ADD UNIQUE KEY ux_predictETH5_ts_event_model (ts_utc, event_key, model_tag)
+        """
+    )
+    try:
+        with engine.begin() as conn:
+            conn.execute(ddl)
+            logging.info("Unique index ux_predictETH5_ts_event_model created on predictETH5")
+    except Exception as exc:  # noqa: BLE001
+        logging.info("Unique index creation skipped: %s", exc)
 
 
 def _table_has_updated_at(engine: sqlalchemy.Engine) -> bool:
@@ -742,43 +730,9 @@ def _prepare_insert_frame(preds: pd.DataFrame, removed_ids: set) -> pd.DataFrame
     preds = preds.copy()
     preds["is_removed"] = preds["id"].isin(removed_ids).astype(int)
     preds.rename(columns={"timestamp_utc": "ts_utc", "id": "src_id"}, inplace=True)
-    preds["src_id"] = pd.to_numeric(preds["src_id"], errors="coerce")
-
-    preds["ts_utc"] = pd.to_datetime(preds["ts_utc"], errors="coerce")
-    preds["ts_utc"] = preds["ts_utc"].dt.tz_localize(None)
-    preds["ts_utc"] = preds["ts_utc"].dt.round("min")
 
     preds = preds.sort_values("direction_prob", ascending=False)
-
-    deduped_rows: List[pd.Series] = []
-    seen: Set[Tuple[str, datetime, str, str]] = set()
-    for _, row in preds.iterrows():
-        key = _primary_key_for_row(row)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped_rows.append(row)
-
-    if not deduped_rows:
-        return pd.DataFrame(columns=[
-            "ts_utc",
-            "event",
-            "event_key",
-            "src_id",
-            "direction_pred",
-            "direction_prob",
-            "magnitude_pred",
-            "price_entry",
-            "price_exit",
-            "currency_pair",
-            "priority",
-            "is_removed",
-            "model_tag",
-            "extra_json",
-        ])
-
-    preds = pd.DataFrame(deduped_rows)
-
+    preds = preds.drop_duplicates(subset=["ts_utc", "event_key", "model_tag"], keep="first")
 
     preds["direction_prob"] = _round_decimal(preds["direction_prob"], 4)
     preds["magnitude_pred"] = _round_decimal(preds["magnitude_pred"], 3)
@@ -805,173 +759,37 @@ def _prepare_insert_frame(preds: pd.DataFrame, removed_ids: set) -> pd.DataFrame
     ]
 
 
-def _convert_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, (float, np.floating)) and np.isnan(value):
-        return None
-    if isinstance(value, (np.generic,)):
-        return value.item()
-    return value
-
-
-def _fetch_existing_record(
-    conn: sqlalchemy.engine.Connection,
-    *,
-    ts_utc: datetime,
-    model_tag: str,
-    src_id: Optional[Any],
-    event_key: Optional[str],
-    event_norm: str,
-) -> Optional[int]:
-    if src_id is not None:
-        query = text(
-            """
-            SELECT id FROM predictETH5
-            WHERE ts_utc = :ts
-              AND model_tag = :model
-              AND src_id IS NOT NULL
-              AND src_id = :src_id
-            LIMIT 1
-            """
-        )
-        result = conn.execute(query, {"ts": ts_utc, "model": model_tag, "src_id": src_id}).fetchone()
-        if result:
-            return result[0]
-
-    if event_key:
-        query = text(
-            """
-            SELECT id FROM predictETH5
-            WHERE ts_utc = :ts
-              AND model_tag = :model
-              AND event_key IS NOT NULL
-              AND event_key = :event_key
-            LIMIT 1
-            """
-        )
-        result = conn.execute(query, {"ts": ts_utc, "model": model_tag, "event_key": event_key}).fetchone()
-        if result:
-            return result[0]
-
-    if event_norm:
-        query = text(
-            """
-            SELECT id, event FROM predictETH5
-            WHERE ts_utc = :ts
-              AND model_tag = :model
-              AND event IS NOT NULL
-            """
-        )
-        rows = conn.execute(query, {"ts": ts_utc, "model": model_tag}).fetchall()
-        for row in rows:
-            existing_event = row[1]
-            if _normalize_event_text(existing_event) == event_norm:
-                return row[0]
-
-    return None
-
-
 def _insert_predictions(engine: sqlalchemy.Engine, df: pd.DataFrame, update_has_col: bool) -> None:
     if df.empty:
         logging.info("No predictions to insert")
         return
-
-    insert_sql = text(
-        """
+    records = df.to_dict(orient="records")
+    for rec in records:
+        if isinstance(rec["ts_utc"], pd.Timestamp):
+            rec["ts_utc"] = rec["ts_utc"].to_pydatetime()
+    base_sql = """
         INSERT INTO predictETH5
         (ts_utc, event, event_key, src_id, direction_pred, direction_prob, magnitude_pred,
          price_entry, price_exit, currency_pair, priority, is_removed, model_tag, extra_json)
         VALUES
         (:ts_utc, :event, :event_key, :src_id, :direction_pred, :direction_prob, :magnitude_pred,
          :price_entry, :price_exit, :currency_pair, :priority, :is_removed, :model_tag, :extra_json)
-        """
-    )
-
-    update_sql = """
-        UPDATE predictETH5
-           SET direction_pred = :direction_pred,
-               direction_prob = :direction_prob,
-               magnitude_pred = :magnitude_pred,
-               price_entry = :price_entry,
-               price_exit = :price_exit,
-               priority = :priority,
-               is_removed = :is_removed,
-               extra_json = :extra_json
+        ON DUPLICATE KEY UPDATE
+         direction_pred=VALUES(direction_pred),
+         direction_prob=VALUES(direction_prob),
+         magnitude_pred=VALUES(magnitude_pred),
+         price_entry=VALUES(price_entry),
+         price_exit=VALUES(price_exit),
+         priority=VALUES(priority),
+         is_removed=VALUES(is_removed),
+         extra_json=VALUES(extra_json)
     """
     if update_has_col:
-        update_sql += ", updated_at = NOW()"
-    update_sql += "\n         WHERE id = :id"
-    update_stmt = text(update_sql)
-
-    processed = 0
+        base_sql += ", updated_at=NOW()"
+    stmt = text(base_sql)
     with engine.begin() as conn:
-        for record in df.to_dict(orient="records"):
-            ts_value = record.get("ts_utc")
-            if isinstance(ts_value, pd.Timestamp):
-                if pd.isna(ts_value):
-                    logging.warning("Skipping record with invalid timestamp: %s", record)
-                    continue
-                ts_value = ts_value.to_pydatetime()
-            if ts_value is None:
-                logging.warning("Skipping record with missing timestamp: %s", record)
-                continue
-            record["ts_utc"] = ts_value
-
-            src_id = _convert_value(record.get("src_id"))
-            if src_id is not None:
-                src_id = int(src_id)
-            event_key_raw = _convert_value(record.get("event_key"))
-            event_key = str(event_key_raw) if event_key_raw not in (None, "") else None
-            event_norm = _normalize_event_text(record.get("event"))
-            record["src_id"] = src_id
-            record["event_key"] = event_key
-
-            existing_id = _fetch_existing_record(
-                conn,
-                ts_utc=record["ts_utc"],
-                model_tag=record["model_tag"],
-                src_id=src_id,
-                event_key=event_key,
-                event_norm=event_norm,
-            )
-
-            insert_payload = {
-                "ts_utc": record["ts_utc"],
-                "event": record.get("event"),
-                "event_key": record.get("event_key"),
-                "src_id": record.get("src_id"),
-                "direction_pred": int(record.get("direction_pred", 0)),
-                "direction_prob": float(record.get("direction_prob", 0.0)),
-                "magnitude_pred": float(record.get("magnitude_pred", 0.0)),
-                "price_entry": float(record.get("price_entry", 0.0)),
-                "price_exit": float(record.get("price_exit", 0.0)),
-                "currency_pair": record.get("currency_pair"),
-                "priority": record.get("priority"),
-                "is_removed": int(record.get("is_removed", 0)),
-                "model_tag": record.get("model_tag"),
-                "extra_json": record.get("extra_json"),
-            }
-
-            if existing_id is not None:
-                update_payload = {
-                    "direction_pred": insert_payload["direction_pred"],
-                    "direction_prob": insert_payload["direction_prob"],
-                    "magnitude_pred": insert_payload["magnitude_pred"],
-                    "price_entry": insert_payload["price_entry"],
-                    "price_exit": insert_payload["price_exit"],
-                    "priority": insert_payload["priority"],
-                    "is_removed": insert_payload["is_removed"],
-                    "extra_json": insert_payload["extra_json"],
-                    "id": existing_id,
-                }
-                conn.execute(update_stmt, update_payload)
-            else:
-                conn.execute(insert_sql, insert_payload)
-
-            processed += 1
-
-    logging.info("Inserted/updated %s records into predictETH5", processed)
+        conn.execute(stmt, records)
+    logging.info("Inserted/updated %s records into predictETH5", len(records))
 
 
 def main() -> None:
@@ -982,6 +800,7 @@ def main() -> None:
         logging.exception("Failed to create database engine: %s", exc)
         raise
 
+    _attempt_create_unique_index(engine)
     has_updated_at = _table_has_updated_at(engine)
 
     prices = _load_prices(engine)
