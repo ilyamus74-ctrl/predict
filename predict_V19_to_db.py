@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -103,39 +103,99 @@ def _create_engine() -> sqlalchemy.Engine:
 
 def _load_label_encoder(filename: str) -> Optional[Any]:
     if os.path.exists(filename):
+        logging.info("Loading label encoder from %s", filename)
         return joblib.load(filename)
+    return None
+
+
+def _load_from_candidates(
+    filenames: Sequence[str],
+    *,
+    description: str,
+) -> Optional[Any]:
+    """Return the first joblib object found in MODEL_DIR or FALLBACK_MODEL_DIR."""
+
+    for directory in (MODEL_DIR, FALLBACK_MODEL_DIR):
+        for name in filenames:
+            path = os.path.join(directory, name)
+            if os.path.exists(path):
+                logging.info("Loading %s from %s", description, path)
+                return joblib.load(path)
+    logging.warning("No %s found in %s", description, filenames)
     return None
 
 
 def _load_encoders() -> Dict[str, Any]:
     encoders: Dict[str, Any] = {}
-    le_event = _load_label_encoder(os.path.join(MODEL_DIR, "label_encoder_event_15min.pkl"))
-    le_dep = _load_label_encoder(os.path.join(MODEL_DIR, "label_encoder_dependence_15min.pkl"))
-    if le_event is None:
-        le_event = _load_label_encoder(os.path.join(FALLBACK_MODEL_DIR, "label_encoder_event_15min.pkl"))
-    if le_dep is None:
-        le_dep = _load_label_encoder(os.path.join(FALLBACK_MODEL_DIR, "label_encoder_dependence_15min.pkl"))
-    if le_event is None or le_dep is None:
-        raise FileNotFoundError("Label encoders not found in either primary or fallback directories")
-    encoders["event"] = le_event
-    encoders["dependence"] = le_dep
+    event_filenames = (
+        "label_encoder_event_15min.pkl",
+        "label_encoder_event_te_15m.pkl",
+        "label_encoder_event_te_15min.pkl",
+    )
+    dep_filenames = (
+        "label_encoder_dependence_15min.pkl",
+        "label_encoder_dependence_te_15m.pkl",
+        "label_encoder_dependence_te_15min.pkl",
+    )
+
+    encoders["event"] = _load_from_candidates(event_filenames, description="event label encoder")
+    encoders["dependence"] = _load_from_candidates(
+        dep_filenames, description="dependence label encoder"
+    )
+
+    if encoders["event"] is None:
+        raise FileNotFoundError("Event label encoder not found in either primary or fallback directories")
+
+    if encoders["dependence"] is None:
+        logging.warning(
+            "Dependence label encoder not found; dependence values will be encoded as unknown"
+        )
     return encoders
 
 
 def _encode_with_unknown(le: Any, values: Iterable[Any]) -> np.ndarray:
+    values_list = list(values)
+    if le is None:
+        logging.debug("Label encoder is missing; defaulting to -1 for %d values", len(values_list))
+        return np.full(len(values_list), -1, dtype=int)
+
     classes = getattr(le, "classes_", None)
     if classes is None:
-        raise ValueError("LabelEncoder is not fitted")
+        logging.warning(
+            "Label encoder %s has no classes_; defaulting to -1 for %d values",
+            getattr(le, "__class__", type(le)).__name__,
+            len(values_list),
+        )
+        return np.full(len(values_list), -1, dtype=int)
     mapping = {cls: idx for idx, cls in enumerate(classes)}
-    return np.array([mapping.get(v, -1) for v in values], dtype=int)
+    return np.array([mapping.get(v, -1) for v in values_list], dtype=int)
 
 
 def _load_models() -> Dict[str, Any]:
-    models = {
-        "rf": joblib.load(os.path.join(MODEL_DIR, "model_direction_rf_15min.pkl")),
-        "xgb": joblib.load(os.path.join(MODEL_DIR, "model_direction_xgb_15min.pkl")),
-        "reg": joblib.load(os.path.join(MODEL_DIR, "model_magnitude_15min.pkl")),
-    }
+    models: Dict[str, Any] = {}
+
+    rf_candidates = (
+        "model_direction_rf_15min.pkl",
+        "model_te_direction_rf_15m.pkl",
+    )
+    xgb_candidates = (
+        "model_direction_xgb_15min.pkl",
+        "model_te_direction_xgb_15m.pkl",
+        "model_te_dir2_xgb_15m.pkl",
+    )
+    reg_candidates = (
+        "model_magnitude_15min.pkl",
+        "model_te_magnitude_xgb_15m.pkl",
+    )
+
+    models["rf"] = _load_from_candidates(rf_candidates, description="direction RF model")
+    models["xgb"] = _load_from_candidates(xgb_candidates, description="direction XGB model")
+    models["reg"] = _load_from_candidates(reg_candidates, description="magnitude regression model")
+
+    missing = [name for name, model in models.items() if model is None]
+    if missing:
+        raise FileNotFoundError(f"Missing required models: {', '.join(missing)}")
+
     return models
 
 
@@ -159,9 +219,9 @@ def _load_prices(engine: sqlalchemy.Engine) -> pd.DataFrame:
     prices["low_pips"] = prices["low"] * 10000.0
     prices["close_pips"] = prices["close"] * 10000.0
     prices["RSI_14"] = ta.rsi(prices["close"], length=14).fillna(50.0)
-    prices["SMA_20"] = ta.sma(prices["close"], length=20).fillna(method="bfill").fillna(prices["close"].mean())
+    prices["SMA_20"] = ta.sma(prices["close"], length=20).bfill().fillna(prices["close"].mean())
     atr = ta.atr(prices["high_pips"], prices["low_pips"], prices["close_pips"], length=14)
-    prices["ATR_14"] = atr.fillna(method="bfill").fillna(atr.mean()).fillna(0.0)
+    prices["ATR_14"] = atr.bfill().fillna(atr.mean()).fillna(0.0)
     logging.info("Price indicators prepared: %s rows", len(prices))
     return prices
 
