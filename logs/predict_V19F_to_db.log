@@ -58,3 +58,76 @@
 2025-11-12 21:46:12,541Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
 2025-11-12 21:46:12,594Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
 2025-11-12 21:46:12,617Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 21:46:51,762Z - INFO - news window: raw=14, after_time=14, after_imp=14, time=[2025-11-12 17:16:00..2025-11-12 20:46:00]
+2025-11-12 21:46:51,776Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
+2025-11-12 21:46:51,779Z - INFO - No predictions to insert
+2025-11-12 21:48:11,751Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 21:48:12,696Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 21:48:12,755Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 21:48:12,778Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 21:48:44,009Z - INFO - news window: raw=13, after_time=13, after_imp=13, time=[2025-11-12 17:18:00..2025-11-12 20:48:00]
+2025-11-12 21:48:44,018Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
+2025-11-12 21:48:44,020Z - INFO - No predictions to insert
+2025-11-12 21:49:16,225Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 21:49:17,140Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 21:49:17,186Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 21:49:17,204Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 21:49:48,686Z - ERROR - Unhandled exception in predict_V19F_to_db
+Traceback (most recent call last):
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
+    self._check_compatible_with(other)
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimes.py", line 540, in _check_compatible_with
+    self._assert_tzawareness_compat(other)
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimes.py", line 782, in _assert_tzawareness_compat
+    raise TypeError(
+TypeError: Cannot compare tz-naive and tz-aware datetime-like objects.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 983, in _cmp_method
+    other = self._validate_comparison_value(other)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
+    raise InvalidComparison(other) from err
+pandas.errors.InvalidComparison: 2025-11-12 17:19:00+00:00
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 993, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 974, in main
+    news = _load_news(engine)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 310, in _load_news
+    df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/series.py", line 6119, in _cmp_method
+    res_values = ops.comparison_op(lvalues, rvalues, op)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/array_ops.py", line 330, in comparison_op
+    res_values = op(lvalues, rvalues)
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/common.py", line 76, in new_method
+    return method(self, other)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arraylike.py", line 60, in __ge__
+    return self._cmp_method(other, operator.ge)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 985, in _cmp_method
+    return invalid_comparison(self, other, op)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
+    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
+TypeError: Invalid comparison between dtype=datetime64[ns] and Timestamp
+2025-11-12 21:50:11,621Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 21:50:12,653Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 21:50:12,703Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 21:50:12,722Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
