@@ -292,13 +292,11 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
             f"""
             SELECT {base_select}
             FROM {table}
-            WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() - INTERVAL :past_minutes MINUTE
-                                      AND UTC_TIMESTAMP() + INTERVAL :future_hours HOUR
+            WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() AND UTC_TIMESTAMP() + INTERVAL :future_hours HOUR
             ORDER BY timestamp_utc
         """
         )
-        params = {"future_hours": FUTURE_HOURS, "past_minutes": FUTURE_PAST_MINUTES}
-
+        params = {"future_hours": FUTURE_HOURS}
     else:
         query = text(
             f"""
