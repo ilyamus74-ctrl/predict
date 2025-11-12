@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pandas_ta as ta
 import sqlalchemy
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 # ===================== CONFIG =====================
 FUTURE_MODE = True
@@ -169,10 +169,29 @@ def _prepare_daily_trends(prices: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
+def _resolve_event_column(engine: sqlalchemy.Engine) -> str:
+    inspector = inspect(engine)
+    columns = {col["name"] for col in inspector.get_columns("news_tradingeconomics")}
+    for candidate in ("event", "event_name", "event_title", "title", "event_text"):
+        if candidate in columns:
+            if candidate != "event":
+                logging.warning(
+                    "Using column '%s' from news_tradingeconomics as event text", candidate
+                )
+            return candidate
+    raise RuntimeError(
+        "Unable to locate an event text column in news_tradingeconomics. "
+        "Checked: event, event_name, event_title, title, event_text"
+    )
+
+
+
 def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
-    base_query = """
-        SELECT id, timestamp_utc, event, event_key, imp_total, imp_calculated, imp_trend,
-               direction, magnitude, actual, dependence
+    event_column = _resolve_event_column(engine)
+    event_select = "event" if event_column == "event" else f"{event_column} AS event"
+    base_query = f"""
+        SELECT id, timestamp_utc, {event_select}, event_key, imp_total, imp_calculated, imp_trend,
+        direction, magnitude, actual, dependence
         FROM news_tradingeconomics
     """
     if FUTURE_MODE:
