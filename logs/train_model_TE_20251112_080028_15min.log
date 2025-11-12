@@ -1,0 +1,98 @@
+2025-11-12 10:00:28,097Z - INFO - ==== TE V5 Trainer start ====
+2025-11-12 10:00:28,097Z - INFO - Connecting DB...
+2025-11-12 10:00:28,151Z - INFO - DB OK
+2025-11-12 10:00:28,151Z - INFO - Loading prices...
+2025-11-12 10:03:12,777Z - INFO - Indicators (RSI/SMA/ATR)...
+2025-11-12 10:03:16,321Z - INFO - Daily trends (SMA/trend)...
+2025-11-12 10:03:17,842Z - INFO - Loading TE news...
+2025-11-12 10:03:18,674Z - INFO - Applying event filters in order: exclude prefixes -> cap per timestamp -> drop piles >80
+2025-11-12 10:03:18,698Z - INFO - Excluded 703 stock-related events with prefixes ('te_stock_market_', 'te_stocks_')
+2025-11-12 10:03:18,735Z - INFO - Capped per-timestamp events to 60: kept 3024, dropped 7271
+2025-11-12 10:03:18,736Z - INFO - No timestamps exceeded NEWS_PILE_THRESHOLD=80
+2025-11-12 10:03:18,737Z - INFO - Loading imp_cache_tradingeconomics...
+2025-11-12 10:03:19,366Z - INFO - Building targets (direction/magnitude) with +15m horizon...
+2025-11-12 10:03:21,866Z - INFO - Dynamic horizon filter: 3024 -> 931 events (removed 2093 with horizon < 3m)
+2025-11-12 10:03:22,553Z - INFO - Direction classification thresholds: linear thr_min=1.80 coeff=0.60
+2025-11-12 10:03:22,553Z - INFO - Threshold range (linear): min=1.80 max=2.04 median=1.80
+2025-11-12 10:03:22,554Z - INFO - Loading correlation features...
+2025-11-12 10:03:22,587Z - INFO - Building features...
+2025-11-12 10:03:22,635Z - INFO - Applied correlation fallback by currency/year.
+2025-11-12 10:03:23,536Z - INFO - Labels: use_dynamic=False, y_col=direction_cls, mag_col=magnitude_pips
+2025-11-12 10:03:23,611Z - INFO - Preparing train/test split: mode=events freq=D
+2025-11-12 10:03:23,617Z - INFO - Blocked split mode=events freq=D train_periods=['2025-10-06', '2025-10-08', '2025-10-09', '2025-10-10', '2025-10-12', '2025-10-13', '2025-10-14', '2025-10-15', '2025-10-16', '2025-10-17', '2025-10-19', '2025-10-20', '2025-10-21', '2025-10-22', '2025-10-23', '2025-10-24', '2025-10-26', '2025-10-27', '2025-10-28', '2025-10-29', '2025-10-30', '2025-10-31', '2025-11-02', '2025-11-03', '2025-11-04', '2025-11-05', '2025-11-06', '2025-11-07', '2025-11-09', '2025-11-10'] test_periods=['2025-11-11', '2025-11-12'] purge=[]
+2025-11-12 10:03:23,620Z - INFO - Split result mode=events freq=D: train=797 (85.61%) test=134 (14.39% target=15.00%) purge_removed=0
+2025-11-12 10:03:23,621Z - INFO - Overall class distribution after filtering: counts=[181, 434, 316] share=[0.1944, 0.4662, 0.3394]
+2025-11-12 10:03:23,625Z - INFO - Time split @ 2025-11-11 00:00:00: train=797, test=134
+2025-11-12 10:03:23,626Z - INFO - Class balance (train): Counter({np.int64(1): 367, np.int64(2): 278, np.int64(0): 152})
+2025-11-12 10:03:23,626Z - INFO - Class share (train): [0.1907, 0.4605, 0.3488]
+2025-11-12 10:03:23,626Z - INFO - Class balance (test): Counter({np.int64(1): 67, np.int64(2): 38, np.int64(0): 29})
+2025-11-12 10:03:23,626Z - INFO - Class share (test): [0.2164, 0.5, 0.2836]
+2025-11-12 10:03:23,627Z - INFO - Baseline (majority=1) acc=0.5000
+2025-11-12 10:03:23,627Z - INFO - Train RandomForest (direction)...
+2025-11-12 10:03:24,946Z - INFO - GridSearch XGBClassifier (direction)...
+2025-11-12 10:06:54,967Z - INFO - Best XGB params: {'learning_rate': 0.05, 'max_depth': 6, 'n_estimators': 200}
+2025-11-12 10:06:55,146Z - INFO - Pred counts (raw): [65, 61, 8]
+2025-11-12 10:06:55,147Z - INFO - Avg probs (raw p0,p1,p2): [0.4317, 0.4144, 0.1539]
+2025-11-12 10:06:55,147Z - INFO - Train priors: [0.1907, 0.4605, 0.3488], alpha disabled
+2025-11-12 10:06:55,148Z - INFO - Avg probs (raw p0,p1,p2): [0.4317, 0.4144, 0.1539]
+2025-11-12 10:06:55,148Z - INFO - Pred counts (adj+margin): [60, 61, 13]
+2025-11-12 10:06:55,153Z - INFO - 
+Confusion matrix [rows=true (0,1,2), cols=pred]:
+[[12 13  4]
+ [27 33  7]
+ [21 15  2]]
+2025-11-12 10:06:55,169Z - INFO - 
+              precision    recall  f1-score   support
+
+           0      0.200     0.414     0.270        29
+           1      0.541     0.493     0.516        67
+           2      0.154     0.053     0.078        38
+
+    accuracy                          0.351       134
+   macro avg      0.298     0.320     0.288       134
+weighted avg      0.357     0.351     0.338       134
+
+2025-11-12 10:06:55,174Z - INFO - Per-class recall: [0.414, 0.493, 0.053]
+2025-11-12 10:06:55,175Z - INFO - Ensemble (RF+XGB) direction: acc=0.3507 f1=0.2879
+2025-11-12 10:06:55,177Z - INFO - FX-only subset: n=134 share=100.00% acc=0.3507 macroF1=0.2879
+2025-11-12 10:06:55,204Z - INFO - [DAILY] 2025-11-11 n=100 acc=0.310 macroF1=0.275 dist=[0.20,0.52,0.28]
+2025-11-12 10:06:55,204Z - INFO - [DAILY] 2025-11-12 n=34 acc=0.471 macroF1=0.275 dist=[0.26,0.44,0.29]
+2025-11-12 10:07:08,263Z - INFO - 
+[2-stage] Confusion (0,1,2 rows vs cols):
+[[ 6 16  7]
+ [21 38  8]
+ [14 22  2]]
+2025-11-12 10:07:10,695Z - INFO - [2-stage] acc=0.3433 macroF1=0.2585 move_cov=0.43
+2025-11-12 10:07:10,695Z - INFO - 
+=== Confidence-based filtering ===
+2025-11-12 10:07:10,706Z - INFO - Conf>=0.50: coverage=89.55% n=120 acc=0.342 f1=0.284
+2025-11-12 10:07:10,709Z - INFO - Conf>=0.55: coverage=76.87% n=103 acc=0.359 f1=0.284
+2025-11-12 10:07:10,712Z - INFO - Conf>=0.60: coverage=57.46% n= 77 acc=0.338 f1=0.271
+2025-11-12 10:07:10,714Z - INFO - Conf>=0.65: coverage=31.34% n= 42 acc=0.333 f1=0.253
+2025-11-12 10:07:10,717Z - INFO - Conf>=0.70: coverage=10.45% n= 14 acc=0.429 f1=0.326
+2025-11-12 10:07:10,721Z - INFO - Conf>=0.75: coverage= 1.49% n=  2 acc=0.000 f1=0.000
+2025-11-12 10:07:10,721Z - INFO - 
+=== Trade gate (FX-only) ===
+2025-11-12 10:07:10,721Z - INFO - Trade gate thresholds: conf>=0.72, p_move>=0.68, margin>=0.10
+2025-11-12 10:07:10,726Z - INFO - Trade gate coverage_total= 2.24% coverage_fx= 2.24% n=  3 acc=0.000 macroF1=0.000
+2025-11-12 10:07:10,726Z - INFO - Acceptance check: overall_ok=False (macroF1=0.288, recall2=0.053) trade_ok=False (cov=0.022 acc=0.000)
+2025-11-12 10:07:10,766Z - INFO - Criteria not met -> scanning threshold/gate grid (no retraining, what-if analysis)
+2025-11-12 10:07:11,410Z - INFO - Best grid combo: thr_min=1.60 thr_coeff=0.55 conf=0.70 move=0.75 margin=0.05 | f1=0.292 recall2=0.050 cov=0.052 acc_trade=0.286 f1_trade=0.148 main_ok=False gate_ok=False
+2025-11-12 10:07:11,410Z - INFO - 
+=== Performance by event type (top 10) ===
+2025-11-12 10:07:11,423Z - INFO - 
+Top 10 best performing events:
+2025-11-12 10:07:11,423Z - INFO -   te_misc_commodity: acc=0.316 (12/38) avg_delta=+0.07 avg_delta_dyn=+0.49 avg_mag=2.50
+2025-11-12 10:07:11,424Z - INFO -   te_misc_currency: acc=0.286 (2/7) avg_delta=+1.24 avg_delta_dyn=+3.11 avg_mag=2.16
+2025-11-12 10:07:11,424Z - INFO - 
+Bottom 10 worst performing events:
+2025-11-12 10:07:11,424Z - INFO -   te_misc_commodity: acc=0.316 (12/38) avg_delta=+0.07 avg_delta_dyn=+0.49 avg_mag=2.50
+2025-11-12 10:07:11,425Z - INFO -   te_misc_currency: acc=0.286 (2/7) avg_delta=+1.24 avg_delta_dyn=+3.11 avg_mag=2.16
+2025-11-12 10:07:11,425Z - INFO - 
+=== FX-only performance (event types, top 10) ===
+2025-11-12 10:07:11,433Z - INFO -   te_misc_commodity: acc=0.316 (12/38) avg_delta=+0.07
+2025-11-12 10:07:11,433Z - INFO -   te_misc_currency: acc=0.286 (2/7) avg_delta=+1.24
+2025-11-12 10:07:11,682Z - INFO - GridSearch XGBRegressor (magnitude)...
+2025-11-12 10:07:38,112Z - INFO - Best XGBReg params: {'learning_rate': 0.05, 'max_depth': 4, 'n_estimators': 400}
+2025-11-12 10:07:39,236Z - INFO - RMSE magnitude (pips) @+15m: 2.1966
+2025-11-12 10:07:40,385Z - INFO - ==== TE V5 Trainer done ====

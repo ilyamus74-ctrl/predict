@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import json
-import logging
 import os
+import logging
 from datetime import datetime, timezone
 
 import numpy as np
@@ -24,7 +23,6 @@ import re
 from math import ceil
 from sklearn.utils.class_weight import compute_class_weight
 
-from features_v19 import FEATURES_V19, build_features_for_news
 
 # ================== CONFIG ==================
 PROGRAM_DIR   = '/home/ilyamus/GPTGROKWORK'
@@ -102,30 +100,26 @@ with engine.begin() as conn:
     conn.execute(text("SET NAMES utf8mb4"))
 logging.info("DB OK")
 
-config_dump = " ".join([
-    f"SPLIT_MODE={SPLIT_MODE}",
-    f"SPLIT_FREQ={SPLIT_FREQ}",
-    f"TEST_EVENT_FRAC={TEST_EVENT_FRAC:.2f}",
-    f"TEST_PERIOD_FRAC={TEST_PERIOD_FRAC:.2f}",
-    f"PURGE_PERIODS={PURGE_PERIODS}",
-    f"NEWS_PILE_THRESHOLD={NEWS_PILE_THRESHOLD}",
-    f"MAX_EVENTS_PER_TIMESTAMP={MAX_EVENTS_PER_TIMESTAMP}",
-    f"THR_MIN_PIPS={THR_MIN_PIPS:.2f}",
-    f"THR_COEFF={THR_COEFF:.2f}",
-    f"USE_VOL_QUANTILE={USE_VOL_QUANTILE}",
-    f"VOL_QUANTILE={VOL_QUANTILE:.2f}",
-    f"MIN_H_MIN={MIN_H_MIN}",
-    f"MAX_H_MIN={MAX_H_MIN}",
-    f"BOOST_DOWN={BOOST_DOWN:.2f}",
-    f"BOOST_NEU={BOOST_NEU:.2f}",
-    f"BOOST_UP={BOOST_UP:.2f}",
-    f"SINGLETON_BOOST_MAX={SINGLETON_BOOST_MAX:.2f}",
-    f"CONF_GATE={CONF_GATE:.2f}",
-    f"MOVE_GATE_TRADE={MOVE_GATE_TRADE:.2f}",
-    f"MARGIN_GATE={MARGIN_GATE:.2f}",
-    f"MOVE_GATE_2STAGE={MOVE_GATE_2STAGE:.2f}",
-    f"DROP_CONST_FEATURES_MIN_NUNIQUE={DROP_CONST_FEATURES_MIN_NUNIQUE}",
-])
+logging.info(
+    "Config dump: split_mode=%s freq=%s test_event_frac=%.2f test_period_frac=%.2f "
+    "max_events_per_ts=%s thr_min=%.2f thr_coeff=%.2f use_vol_quantile=%s vol_q=%.2f "
+    "min_h=%d max_h=%d gates(conf=%.2f move_trade=%.2f margin=%.2f move_2stage=%.2f)",
+    SPLIT_MODE,
+    SPLIT_FREQ,
+    TEST_EVENT_FRAC,
+    TEST_PERIOD_FRAC,
+    'None' if MAX_EVENTS_PER_TIMESTAMP is None else MAX_EVENTS_PER_TIMESTAMP,
+    THR_MIN_PIPS,
+    THR_COEFF,
+    USE_VOL_QUANTILE,
+    VOL_QUANTILE,
+    MIN_H_MIN,
+    MAX_H_MIN,
+    CONF_GATE,
+    MOVE_GATE_TRADE,
+    MARGIN_GATE,
+    MOVE_GATE_2STAGE,
+)
 
 # ---------- UTILS ----------
 def slugify(s: str) -> str:
@@ -311,6 +305,13 @@ min_year = int(news['year'].min())
 imp = pd.read_sql(text(q_imp), engine, params={"y0": min_year})
 if imp.empty:
     logging.warning("imp_cache_tradingeconomics is empty or no rows >= min(news.year)")
+
+news = news.merge(
+    imp[['event_key', 'year', 'volatility', 'trend']],
+    on=['event_key', 'year'],
+    how='left',
+    suffixes=('', '_imp')
+).rename(columns={'volatility': 'imp_year_vol', 'trend': 'imp_year_trend'})
 
 # ---------- BUILD TARGETS FROM PRICES ----------
 logging.info("Building targets (direction/magnitude) with +15m horizon...")
@@ -506,32 +507,165 @@ logging.info(
     float(thr_series.max()),
     float(thr_series.median()),
 )
+# ---------- FEATURES ----------
+logging.info("Building features...")
+
+# базовые фичи времени
+news['hour']        = news['published_at'].dt.hour.astype(int)
+news['day_of_week'] = news['published_at'].dt.dayofweek.astype(int)
+
+# сессии (UTC): EU ~ 07–16, US ~ 12–21, только будни
+news['is_weekday']     = (news['day_of_week'] < 5).astype(int)
+news['is_eu_session']  = ((news['hour'] >= 7)  & (news['hour'] <= 16) & (news['is_weekday'] == 1)).astype(int)
+news['is_us_session']  = ((news['hour'] >= 12) & (news['hour'] <= 21) & (news['is_weekday'] == 1)).astype(int)
+
+
+# sentiment
+news['sent_finbert'] = news['sent_finbert'].astype(float).fillna(0.0)
+news['sent_label']   = (news['sent_label'].astype(str).fillna('neu'))
+news['sent_label_id'] = news['sent_label'].map({'neg':0,'neu':1,'pos':2}).fillna(1).astype(int)
+news['sent_pos'] = (news['sent_label_id'] == 2).astype(int)
+news['sent_neg'] = (news['sent_label_id'] == 0).astype(int)
+
+# текстовые метрики
+text_len = news['text_clean'].fillna('').astype(str).str.len()
+news['text_len'] = text_len.clip(upper=text_len.quantile(0.99)).astype(int)
+
+# event_key encoding
+le_event = LabelEncoder()
+news['event_key_encoded'] = le_event.fit_transform(news['event_key'].astype(str))
+joblib.dump(le_event, f'{MODEL_DIR}/label_encoder_event_te_15m.pkl')
+
+# Корреляционные фичи
 logging.info("Loading correlation features...")
-corr_event_df = pd.DataFrame()
-corr_fallback_df = pd.DataFrame()
+corr_cols = ['correlation','price_change','corr_direction','probability','observations']
+for c in corr_cols:
+    news[c] = 0.0
+
+loaded_corr = False
 try:
     q_corr_v5 = """
       SELECT event_key, correlation, price_change, direction AS corr_direction, probability, observations
       FROM correlation_trends_v5
     """
-    corr_event_df = pd.read_sql(text(q_corr_v5), engine)
-    if corr_event_df.empty or 'event_key' not in corr_event_df.columns:
-        corr_event_df = pd.DataFrame()
-except Exception as exc:
-    logging.warning("event-level correlations not usable: %s", exc)
-try:
-    corr_fallback_df = pd.read_sql(text("SELECT currency, year, correlation FROM correlation_trends"), engine)
-except Exception as exc:
-    logging.warning("Failed to load correlation_trends fallback: %s", exc)
-    corr_fallback_df = pd.DataFrame()
+    corr_v5 = pd.read_sql(text(q_corr_v5), engine)
+    if not corr_v5.empty and 'event_key' in corr_v5.columns:
+        news = news.merge(corr_v5[['event_key']+corr_cols], on='event_key', how='left')
+        for c in corr_cols:
+            news[c] = news[c].fillna(0.0)
+        loaded_corr = True
+        logging.info("Loaded correlation_trends_v5 (event-level).")
+except Exception as e:
+    logging.warning(f"event-level correlations not usable: {e}")
 
-corr_sources = {'event': corr_event_df, 'fallback': corr_fallback_df}
+if not loaded_corr:
+    logging.info("Falling back to correlation_trends (currency/year).")
+    corr_cy = pd.read_sql(text("SELECT currency, year, correlation FROM correlation_trends"), engine)
+    if not corr_cy.empty:
+        corr_cy['currency'] = corr_cy['currency'].str.upper()
 
-logging.info("Building features...")
-le_event = LabelEncoder()
-X, meta = build_features_for_news(news, prices, daily, imp, corr_sources, le_event)
-FEATURES = list(FEATURES_V19)
-joblib.dump(le_event, f'{MODEL_DIR}/label_encoder_event_te_15m.pkl')
+        COUNTRY_TO_CCY = {
+            'United States':'USD','Euro Area':'EUR','Eurozone':'EUR','Germany':'EUR','France':'EUR',
+            'United Kingdom':'GBP','Japan':'JPY','Canada':'CAD','Switzerland':'CHF','Australia':'AUD',
+            'China':'CNY','India':'INR','Russia':'RUB','Brazil':'BRL','Mexico':'MXN',
+            'ALL':'ALL'
+        }
+
+        def map_country_to_ccy(country: str) -> str:
+            if not isinstance(country, str) or not country.strip():
+                return 'ALL'
+            c = country.strip()
+            if c.lower().startswith('euro'):
+                return 'EUR'
+            return COUNTRY_TO_CCY.get(c, 'ALL')
+
+        if 'timestamp_utc' not in news.columns:
+            news['timestamp_utc'] = pd.to_datetime(news['published_at'], utc=True).dt.tz_convert(None)
+        news['news_year']     = pd.to_datetime(news['timestamp_utc']).dt.year
+        news['news_currency'] = news['tags'].apply(map_country_to_ccy).str.upper().fillna('ALL')
+
+        corr_cy = corr_cy.rename(columns={'correlation':'corr_by_currency'})
+        news = news.merge(
+            corr_cy, left_on=['news_currency','news_year'], right_on=['currency','year'], how='left'
+        )
+
+        corr_all = corr_cy[corr_cy['currency']=='ALL'][['year','corr_by_currency']].rename(
+            columns={'corr_by_currency':'corr_all'}
+        )
+        news = news.merge(corr_all, left_on='news_year', right_on='year', how='left')
+
+        news['correlation'] = news['corr_by_currency'].fillna(news['corr_all']).fillna(0.0)
+
+        for c in ['currency','year','corr_by_currency','corr_all','year_x','year_y']:
+            if c in news.columns:
+                news.drop(columns=[c], inplace=True)
+        logging.info("Applied currency/year correlation fallback.")
+
+# приклеиваем рыночные фичи
+news = pd.merge_asof(
+    news.sort_values('published_at'),
+    prices[['timestamp_utc','close','RSI_14','SMA_20','ATR_14']].sort_values('timestamp_utc'),
+    left_on='published_at',
+    right_on='timestamp_utc',
+    direction='backward',
+    tolerance=pd.Timedelta('15min')
+).drop(columns=['timestamp_utc'], errors='ignore')
+
+# дневные тренды
+news = pd.merge_asof(
+    news.sort_values('published_at'),
+    daily.sort_values('timestamp_utc'),
+    left_on='published_at',
+    right_on='timestamp_utc',
+    direction='backward',
+    tolerance=pd.Timedelta('1D')
+).drop(columns=['timestamp_utc'], errors='ignore')
+
+# pre-vol fill
+news['volatility_pre_15m'] = news['volatility_pre_15m'].fillna(news['volatility_pre_15m'].median())
+
+# fill market features
+for col in ['close','RSI_14','SMA_20','ATR_14','SMA_365','trend_365',
+            'SMA_1M','SMA_3M','SMA_6M','SMA_12M','trend_1M','trend_3M','trend_6M','trend_12M',
+            'SMA_3Q','SMA_6Q','SMA_12Q','trend_3Q','trend_6Q','trend_12Q']:
+    if col in news.columns:
+        if news[col].dtype.kind in 'biufc':
+            news[col] = news[col].astype(float).fillna(news[col].median())
+        else:
+            news[col] = news[col].fillna(0)
+
+# импульсные фичи
+news['imp_year_vol']   = news['imp_year_vol'].astype(float).fillna(0.0)
+news['imp_year_trend'] = news['imp_year_trend'].astype(float).fillna(0.0)
+
+# Доп. фичи на "направленный" моментум
+news['accel_5_15'] = news['ret_pre_5m'] - (news['ret_pre_15m'] / 3.0)  # грубая оценка ускорения
+news['RSI_high']   = (news['RSI_14'] >= 60).astype(int)
+news['RSI_low']    = (news['RSI_14'] <= 40).astype(int)
+# Взаимодействие "позитивный сентимент × ускорение"
+news['sent_pos_x_accel'] = np.clip(news['sent_finbert'], 0, None) * news['accel_5_15']
+
+# ---------- DATASET ----------
+FEATURES = [
+    # время/сессии
+    'hour','day_of_week','is_weekday','is_eu_session','is_us_session',
+    # ключ события и текст
+    'event_key_encoded','text_len',
+    # сентимент
+    'sent_finbert','sent_label_id','sent_pos','sent_neg','sent_pos_x_accel',
+    # импакт/рынок
+    'imp_year_vol',
+    'volatility_pre_15m','RSI_14','RSI_high','RSI_low','SMA_20','ATR_14',
+    'SMA_365','trend_365',
+    # дневные окна
+    'SMA_1M','SMA_3M','SMA_6M','SMA_12M','trend_1M','trend_3M','trend_6M','trend_12M',
+    'SMA_3Q','SMA_6Q','SMA_12Q','trend_3Q','trend_6Q','trend_12Q',
+    # корреляции (только агрегат)
+    'correlation',
+    # импульсы до новости
+    'ret_pre_5m','ret_pre_15m','sign_ret15','ret_pre_15m_norm','accel_5_15'
+]
+
 
 # Фиксированная разметка как в V18 (можно потом снова включить динамику)
 USE_DYNAMIC_LABELS = False
@@ -541,11 +675,9 @@ MAG_COL   = 'magnitude_pips_dyn' if USE_DYNAMIC_LABELS else 'magnitude_pips'
 logging.info(f"Labels: use_dynamic={USE_DYNAMIC_LABELS}, y_col={LABEL_COL}, mag_col={MAG_COL}")
 
 # drop rows with missing target
-valid_mask = news[[LABEL_COL, MAG_COL]].notna().all(axis=1)
-news = news.loc[valid_mask].reset_index(drop=True)
-X = X.loc[valid_mask].reset_index(drop=True)
-meta = meta.loc[valid_mask].reset_index(drop=True)
+news = news.dropna(subset=[LABEL_COL, MAG_COL]).reset_index(drop=True)
 
+X = news[FEATURES].copy()
 y_mag = np.log1p(news[MAG_COL].astype(float).values)
 
 # Дроп константных фич (часто после фоллбэка корры все нули)
@@ -558,7 +690,7 @@ if const_cols:
         const_cols,
     )
     FEATURES = [c for c in FEATURES if c not in const_cols]
-    X = X[FEATURES].copy()
+    X = news[FEATURES].copy()
 
 # imputers
 num_cols = X.select_dtypes(include=[np.number]).columns
@@ -567,21 +699,6 @@ X[num_cols] = imp_num.fit_transform(X[num_cols])
 
 # ---------- TIME SPLIT ----------
 from collections import Counter
-
-
-def _strip_timezone(series: pd.Series) -> pd.Series:
-    series = pd.to_datetime(series)
-    try:
-        tz = series.dt.tz
-    except AttributeError:
-        tz = None
-    if tz is not None:
-        return series.dt.tz_convert(None)
-    try:
-        return series.dt.tz_localize(None)
-    except (AttributeError, TypeError):
-        return series
-
 
 def time_split_by_quantile(df_ts, X, y, ts_col='published_at', test_frac=0.2):
     split_date = df_ts[ts_col].quantile(1 - test_frac)
@@ -596,7 +713,7 @@ def time_split_by_quantile(df_ts, X, y, ts_col='published_at', test_frac=0.2):
 
 
 def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_periods):
-    ts_series = _strip_timezone(df_ts[ts_col])
+    ts_series = pd.to_datetime(df_ts[ts_col])
     if ts_series.empty:
         logging.warning("Event share split: no timestamps available")
         return None
@@ -608,42 +725,29 @@ def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_pe
         return None
 
     period_series = periods
-    period_counts = period_series.value_counts().reindex(unique_periods, fill_value=0).astype(int)
+    period_counts = period_series.value_counts().reindex(unique_periods, fill_value=0)
     total_events = int(period_counts.sum())
     if total_events == 0:
         logging.warning("Event share split: zero events after filtering")
         return None
 
-    suffix_counts = period_counts.values[::-1].cumsum()[::-1]
-    shares = suffix_counts / total_events
+    target_events = int(np.ceil(total_events * target_frac))
+    target_events = max(target_events, 1)
 
-    within_tol = np.where(np.abs(shares - target_frac) <= 0.01)[0]
-    if within_tol.size > 0:
-        test_start_idx = int(within_tol[0])
-    else:
-        left, right = 0, len(shares) - 1
-        best_idx = len(shares) - 1
-        best_diff = float('inf')
-        while left <= right:
-            mid = (left + right) // 2
-            diff = abs(shares[mid] - target_frac)
-            if diff < best_diff or (diff == best_diff and mid < best_idx):
-                best_diff = diff
-                best_idx = mid
-            if shares[mid] > target_frac:
-                left = mid + 1
-            else:
-                right = mid - 1
-        for idx in (best_idx - 1, best_idx + 1):
-            if 0 <= idx < len(shares):
-                diff = abs(shares[idx] - target_frac)
-                if diff < best_diff or (diff == best_diff and idx < best_idx):
-                    best_idx = idx
-                    best_diff = diff
-        test_start_idx = int(best_idx)
+    cum = 0
+    n_test = 0
+    for count in reversed(period_counts.values):
+        n_test += 1
+        cum += int(count)
+        if cum >= target_events:
+            break
 
-    test_start_idx = max(1, min(test_start_idx, len(unique_periods) - 1))
+    n_test = min(n_test, len(unique_periods))
+    if n_test <= 0 or n_test >= len(unique_periods):
+        logging.warning("Event share split: unable to allocate distinct train/test periods")
+        return None
 
+    test_start_idx = len(unique_periods) - n_test
     purge_width = min(purge_periods, max(test_start_idx, 0))
     purge_start_idx = max(test_start_idx - purge_width, 0)
     train_end_idx = purge_start_idx
@@ -661,8 +765,7 @@ def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_pe
     mask_purge = period_series.isin(purge_zone)
 
     split_date = pd.Timestamp(test_periods[0].start_time)
-    actual_share = float(shares[test_start_idx])
-    
+
     return {
         'train_mask': mask_train.to_numpy(),
         'test_mask': mask_test.to_numpy(),
@@ -673,12 +776,11 @@ def blocked_time_split_by_event_share(df_ts, ts_col, target_frac, freq, purge_pe
         'purge_periods': [str(p) for p in purge_zone],
         'mode': 'events',
         'freq': freq,
-        'test_share': actual_share,
     }
 
 
 def blocked_time_split(df_ts, ts_col='published_at', test_frac=0.2, freq='W-MON', purge_periods=1):
-    ts = _strip_timezone(df_ts[ts_col]).sort_values()
+    ts = pd.to_datetime(df_ts[ts_col]).sort_values()
     periods = ts.dt.to_period(freq)
     unique_periods = sorted(periods.unique())
     if len(unique_periods) < 3:
@@ -808,8 +910,6 @@ train_events = int(mask_time.sum())
 test_events = int(mask_test_series.sum())
 total_events = len(news)
 test_share_pct = (test_events / total_events * 100.0) if total_events > 0 else 0.0
-if split_info is not None and split_mode_used == 'events':
-    test_share_pct = split_info.get('test_share', test_share_pct / 100.0) * 100.0
 target_pct = (
     TEST_EVENT_FRAC * 100.0 if split_mode_used == 'events' else
     TEST_PERIOD_FRAC * 100.0 if split_mode_used == 'periods' else
@@ -960,37 +1060,6 @@ if fx_test_mask.sum() > 0:
 else:
     logging.info("FX-only subset: no FX-weighted events in test")
 
-
-artifact_ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-
-test_df = news.loc[mask_test_series].copy()
-test_df['pred'] = ens_pred
-test_df['y'] = y_test_dir
-test_df['date'] = test_df['published_at'].dt.date
-
-daily = (
-    test_df.groupby('date')
-    .apply(lambda g: pd.Series({
-        'n': len(g),
-        'acc': (g['pred'].values == g['y'].values).mean(),
-        'macroF1': f1_score(g['y'].values, g['pred'].values, average='macro', zero_division=0),
-        'share_cls0': (g['y'].values == 0).mean(),
-        'share_cls1': (g['y'].values == 1).mean(),
-        'share_cls2': (g['y'].values == 2).mean(),
-    }))
-    .reset_index()
-)
-
-for _, r in daily.iterrows():
-    logging.info(
-        f"[DAILY] {r['date']} n={int(r['n'])} acc={r['acc']:.3f} macroF1={r['macroF1']:.3f} "
-        f"dist=[{r['share_cls0']:.2f},{r['share_cls1']:.2f},{r['share_cls2']:.2f}]"
-    )
-
-daily_path = f"{MODEL_DIR}/logs/valid_daily_{artifact_ts}.csv"
-daily.to_csv(daily_path, index=False)
-
-
 # ===== 2-stage: MOVE (есть движение?) -> DIRECTION (down/up на движениях) =====
 
 # 1) бинарная метка «есть движение» по твоему же thr
@@ -1110,55 +1179,6 @@ logging.info(
     "Acceptance check: overall_ok=%s (macroF1=%.3f, recall2=%.3f) trade_ok=%s (cov=%.3f acc=%s)",
     meets_overall, f1, recall2, meets_gate, trade_cov, None if np.isnan(trade_acc) else f"{trade_acc:.3f}"
 )
-
-predictions_df = meta.loc[mask_test_series].copy()
-predictions_df = predictions_df.assign(
-    y_true=y_test_dir,
-    pred=ens_pred,
-    p0=ens_probs[:, 0],
-    p1=ens_probs[:, 1],
-    p2=ens_probs[:, 2],
-    p_move=p_move_test,
-    conf=conf,
-    margin=margin_gap,
-    is_trade=trade_mask.astype(int),
-)
-predictions_df = predictions_df[[
-    'article_id', 'published_at', 'event_key',
-    'y_true', 'pred', 'p0', 'p1', 'p2', 'p_move', 'conf', 'margin', 'is_trade'
-]]
-predictions_path = f"{MODEL_DIR}/logs/test_predictions_{artifact_ts}.csv"
-predictions_df.to_csv(predictions_path, index=False)
-
-conf_thresholds = [0.60, 0.65, 0.70, 0.75]
-coverage_by_conf = {}
-for thr in conf_thresholds:
-    mask_thr = conf >= thr
-    key = f"{thr:.2f}"
-    if mask_thr.sum() == 0:
-        coverage_by_conf[key] = {"n": 0, "acc": None, "macroF1": None}
-        continue
-    coverage_by_conf[key] = {
-        "n": int(mask_thr.sum()),
-        "acc": float(accuracy_score(y_test_dir[mask_thr], ens_pred[mask_thr])),
-        "macroF1": float(f1_score(y_test_dir[mask_thr], ens_pred[mask_thr], average='macro', zero_division=0)),
-    }
-
-summary = {
-    "acc": float(acc),
-    "macroF1": float(f1),
-    "recall": [float(x) for x in recalls.tolist()],
-    "coverage_by_conf": coverage_by_conf,
-    "trade_gate": {
-        "cov": float(trade_cov),
-        "acc": None if np.isnan(trade_acc) else float(trade_acc),
-        "macroF1": None if np.isnan(trade_f1) else float(trade_f1),
-    },
-}
-summary_path = f"{MODEL_DIR}/logs/summary_{artifact_ts}.json"
-with open(summary_path, 'w', encoding='utf-8') as f_summary:
-    json.dump(summary, f_summary, ensure_ascii=False, indent=2)
-
 
 if not (meets_overall and meets_gate):
     logging.info("Criteria not met -> scanning threshold/gate grid (no retraining, what-if analysis)")
@@ -1283,7 +1303,7 @@ event_stats.columns = [
     'avg_delta_dyn',
     'avg_magnitude'
 ]
-event_stats = event_stats[event_stats['total'] >= 5].sort_values('accuracy', ascending=False)
+event_stats = event_stats[event_stats['total'] >= 3].sort_values('accuracy', ascending=False)
 
 logging.info("\nTop 10 best performing events:")
 for idx, row in event_stats.head(10).iterrows():
@@ -1311,7 +1331,7 @@ fx_stats = fx_only.groupby('event_key').agg({
 }).round(3)
 if not fx_stats.empty:
     fx_stats.columns = ['correct','total','accuracy','avg_delta']
-    fx_stats = fx_stats[fx_stats['total'] >= 5].sort_values('accuracy', ascending=False)
+    fx_stats = fx_stats[fx_stats['total'] >= 3].sort_values('accuracy', ascending=False)
     for idx, row in fx_stats.head(10).iterrows():
         logging.info(f"  {idx}: acc={row['accuracy']:.3f} ({int(row['correct'])}/{int(row['total'])}) "
                      f"avg_delta={row['avg_delta']:+.2f}")
