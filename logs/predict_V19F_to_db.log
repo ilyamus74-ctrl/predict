@@ -559,3 +559,90 @@ sqlalchemy.exc.ProgrammingError: (mysql.connector.errors.ProgrammingError) 1054 
         ]
 [parameters: {'future_hours': 3, 'imp_total': 0.1}]
 (Background on this error at: https://sqlalche.me/e/20/f405)
+2025-11-12 17:06:47,623Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 17:06:48,743Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 17:06:48,798Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 17:06:48,819Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 17:07:18,518Z - WARNING - Using column 'headline' from news_tradingeconomics as event text
+2025-11-12 17:07:18,521Z - WARNING - Column 'event_key' not found in news_tradingeconomics. Proceeding without event keys.
+2025-11-12 17:07:18,523Z - ERROR - Unhandled exception in predict_V19F_to_db
+Traceback (most recent call last):
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/connection_cext.py", line 755, in cmd_query
+    self._cmysql.query(
+_mysql_connector.MySQLInterfaceError: Unknown column 'imp_total' in 'field list'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 1964, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/default.py", line 945, in do_execute
+    cursor.execute(statement, parameters)
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/cursor_cext.py", line 351, in execute
+    self._connection.cmd_query(
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/opentelemetry/context_propagation.py", line 97, in wrapper
+    return method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/connection_cext.py", line 763, in cmd_query
+    raise get_mysql_exception(
+mysql.connector.errors.ProgrammingError: 1054 (42S22): Unknown column 'imp_total' in 'field list'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 909, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 890, in main
+    news = _load_news(engine)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 256, in _load_news
+    df = pd.read_sql(query, engine, params=params)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/io/sql.py", line 734, in read_sql
+    return pandas_sql.read_query(
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/io/sql.py", line 1836, in read_query
+    result = self.execute(sql, params)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/pandas/io/sql.py", line 1660, in execute
+    return self.con.execute(sql, *args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 1416, in execute
+    return meth(
+           ^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/sql/elements.py", line 523, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 1638, in _execute_clauseelement
+    ret = self._execute_context(
+          ^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 1843, in _execute_context
+    return self._exec_single_context(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 1983, in _exec_single_context
+    self._handle_dbapi_exception(
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 2352, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/base.py", line 1964, in _exec_single_context
+    self.dialect.do_execute(
+  File "/usr/local/lib64/python3.12/site-packages/sqlalchemy/engine/default.py", line 945, in do_execute
+    cursor.execute(statement, parameters)
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/cursor_cext.py", line 351, in execute
+    self._connection.cmd_query(
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/opentelemetry/context_propagation.py", line 97, in wrapper
+    return method(cnx, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/mysql/connector/connection_cext.py", line 763, in cmd_query
+    raise get_mysql_exception(
+sqlalchemy.exc.ProgrammingError: (mysql.connector.errors.ProgrammingError) 1054 (42S22): Unknown column 'imp_total' in 'field list'
+[SQL: 
+        SELECT id, timestamp_utc, headline AS event, NULL AS event_key, imp_total, imp_calculated, imp_trend,
+        direction, magnitude, actual, dependence
+        FROM news_tradingeconomics
+    
+        WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() AND UTC_TIMESTAMP() + INTERVAL %(future_hours)s HOUR
+          AND imp_total > %(imp_total)s
+        ORDER BY timestamp_utc
+        ]
+[parameters: {'future_hours': 3, 'imp_total': 0.1}]
+(Background on this error at: https://sqlalche.me/e/20/f405)

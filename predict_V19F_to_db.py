@@ -217,7 +217,7 @@ def _resolve_event_key_column(engine: sqlalchemy.Engine) -> Optional[str]:
 
 def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     event_column = _resolve_event_column(engine)
-        if event_column == "event":
+    if event_column == "event":
         event_select = "event"
     else:
         event_select = f"{event_column} AS event"
@@ -908,5 +908,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        logging.exception("Unhandled exception in predict_V19_to_db")
+        logging.exception("Unhandled exception in predict_V19F_to_db")
         raise
