@@ -214,51 +214,175 @@ def _resolve_event_key_column(engine: sqlalchemy.Engine) -> Optional[str]:
     )
     return None
 
+def _get_first_existing_column(
+    engine: sqlalchemy.Engine, table: str, candidates: Sequence[str]
+) -> Optional[str]:
+    inspector = inspect(engine)
+    cols = {c["name"] for c in inspector.get_columns(table)}
+    for c in candidates:
+        if c in cols:
+            return c
+    return None
+
+
 
 def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
-    event_column = _resolve_event_column(engine)
-    if event_column == "event":
-        event_select = "event"
-    else:
-        event_select = f"{event_column} AS event"
+    table = "news_tradingeconomics"
+    event_col = _get_first_existing_column(
+        engine,
+        table,
+        ["event", "event_name", "event_title", "headline", "title", "name"],
+    )
+    event_key_col = _get_first_existing_column(
+        engine,
+        table,
+        ["event_key", "eventId", "event_id", "event_code", "eventCode", "key"],
+    )
+    imp_total_col = _get_first_existing_column(
+        engine,
+        table,
+        ["imp_total", "importance_total", "importance", "impact_total"],
+    )
+    imp_calc_col = _get_first_existing_column(
+        engine,
+        table,
+        ["imp_calculated", "calc_importance", "importance_calc"],
+    )
+    imp_trend_col = _get_first_existing_column(
+        engine,
+        table,
+        ["imp_trend", "importance_trend"],
+    )
+    direction_col = _get_first_existing_column(engine, table, ["direction"])
+    magnitude_col = _get_first_existing_column(
+        engine,
+        table,
+        ["magnitude", "magnitude_pips", "price_move_pips"],
+    )
+    actual_col = _get_first_existing_column(
+        engine,
+        table,
+        ["actual", "actual_value", "value"],
+    )
+    dependence_col = _get_first_existing_column(
+        engine,
+        table,
+        ["dependence", "dependency", "dependent"],
+    )
 
-    event_key_column = _resolve_event_key_column(engine)
-    if event_key_column is None:
-        event_key_expr = "NULL"
-    else:
-        event_key_expr = event_key_column
+    select_parts = [
+        "id",
+        "timestamp_utc",
+        f"{event_col} AS event" if event_col else "NULL AS event",
+        f"{event_key_col} AS event_key" if event_key_col else "NULL AS event_key",
+        f"{imp_total_col} AS imp_total" if imp_total_col else "NULL AS imp_total",
+        f"{imp_calc_col} AS imp_calculated" if imp_calc_col else "NULL AS imp_calculated",
+        f"{imp_trend_col} AS imp_trend" if imp_trend_col else "NULL AS imp_trend",
+        f"{direction_col} AS direction" if direction_col else "NULL AS direction",
+        f"{magnitude_col} AS magnitude" if magnitude_col else "NULL AS magnitude",
+        f"{actual_col} AS actual" if actual_col else "NULL AS actual",
+        f"{dependence_col} AS dependence" if dependence_col else "NULL AS dependence",
+    ]
+    base_select = ", ".join(select_parts)
 
-    base_query = f"""
-        SELECT id, timestamp_utc, {event_select}, {event_key_expr} AS event_key, imp_total, imp_calculated, imp_trend,
-        direction, magnitude, actual, dependence
-        FROM news_tradingeconomics
-    """
+
     if FUTURE_MODE:
         query = text(
-            base_query
-            + """
-        WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() AND UTC_TIMESTAMP() + INTERVAL :future_hours HOUR
-          AND imp_total > :imp_total
-        ORDER BY timestamp_utc
+            f"""
+            SELECT {base_select}
+            FROM {table}
+            WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() AND UTC_TIMESTAMP() + INTERVAL :future_hours HOUR
+            ORDER BY timestamp_utc
         """
         )
-        params = {"future_hours": FUTURE_HOURS, "imp_total": IMP_TOTAL_THRESHOLD}
+        params = {"future_hours": FUTURE_HOURS}
     else:
         query = text(
-            base_query
-            + """
-        WHERE timestamp_utc BETWEEN :start AND UTC_TIMESTAMP()
-          AND imp_total > :imp_total
-        ORDER BY timestamp_utc
+            f"""
+            SELECT {base_select}
+            FROM {table}
+            WHERE timestamp_utc BETWEEN :start AND UTC_TIMESTAMP()
+            ORDER BY timestamp_utc
         """
         )
-        params = {"start": START_DATE, "imp_total": IMP_TOTAL_THRESHOLD}
+        params = {"start": START_DATE}
+
     df = pd.read_sql(query, engine, params=params)
     if df.empty:
         logging.warning("No news fetched for current mode")
         return df
+
     df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True).dt.tz_convert(None)
     df["timestamp_utc"] = df["timestamp_utc"].dt.round("min")
+
+
+    now_utc = pd.Timestamp.utcnow().floor("min")
+    if FUTURE_MODE:
+        end_utc = now_utc + pd.Timedelta(hours=FUTURE_HOURS)
+        df = df[(df["timestamp_utc"] >= now_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+    else:
+        df = df[
+            (df["timestamp_utc"] >= pd.to_datetime(START_DATE))
+            & (df["timestamp_utc"] <= now_utc)
+        ].copy()
+
+    for col, default, to_numeric in [
+        ("imp_total", 0.0, True),
+        ("imp_calculated", 0.0, True),
+        ("imp_trend", 0.0, True),
+        ("direction", 0.0, True),
+        ("magnitude", 0.0, True),
+        ("actual", 0.0, True),
+    ]:
+        if col not in df:
+            df[col] = default
+        if to_numeric:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default)
+
+    if "dependence" not in df:
+        df["dependence"] = "unknown"
+    df["dependence"] = df["dependence"].fillna("unknown").astype(str)
+
+    if "event" not in df:
+        df["event"] = ""
+    if "event_key" not in df:
+        df["event_key"] = None
+
+    if imp_total_col is None:
+        raw_imp_col = _get_first_existing_column(
+            engine, table, ["importance", "importance_level", "impact"]
+        )
+        if raw_imp_col:
+            ids = tuple(df["id"].tolist()) if len(df) else tuple([-1])
+            imp_df = pd.read_sql(
+                text(
+                    f"SELECT id, {raw_imp_col} AS _raw_imp FROM {table} WHERE id IN :ids"
+                ).bindparams(sqlalchemy.bindparam("ids", expanding=True)),
+                engine,
+                params={"ids": ids},
+            )
+            df = df.merge(imp_df, on="id", how="left")
+            df["imp_total"] = df["_raw_imp"].astype(float) / 3.0
+            df.drop(columns=["_raw_imp"], inplace=True)
+        df["imp_total"] = pd.to_numeric(df["imp_total"], errors="coerce").fillna(0.0)
+
+    if FUTURE_MODE:
+        df = df[df["imp_total"] > IMP_TOTAL_THRESHOLD].copy()
+
+    logging.info(
+        "news_tradingeconomics mapping: event=%s, event_key=%s, imp_total=%s, imp_calculated=%s, imp_trend=%s, direction=%s, magnitude=%s, actual=%s, dependence=%s; rows=%d",
+        event_col,
+        event_key_col,
+        imp_total_col,
+        imp_calc_col,
+        imp_trend_col,
+        direction_col,
+        magnitude_col,
+        actual_col,
+        dependence_col,
+        len(df),
+    )
+
     return df
 
 
