@@ -1,0 +1,13 @@
+2025-11-12 10:46:11,195Z - INFO - ==== predict_V19F_to_db start ====
+2025-11-12 10:46:12,010Z - INFO - Unique index ux_predictETH5_ts_event_model created on predictETH5
+2025-11-12 10:46:12,047Z - INFO - Loading price data starting 2022-01-01
+2025-11-12 10:46:41,622Z - INFO - Price indicators prepared: 1396255 rows
+2025-11-12 10:46:42,308Z - INFO - Removed news ids loaded: 60
+2025-11-12 10:46:42,309Z - ERROR - Failed to load models or encoders: Label encoders not found in either primary or fallback directories
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19_to_db.py", line 651, in main
+    encoders = _load_encoders()
+               ^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19_to_db.py", line 119, in _load_encoders
+    raise FileNotFoundError("Label encoders not found in either primary or fallback directories")
+FileNotFoundError: Label encoders not found in either primary or fallback directories
