@@ -59,3 +59,32 @@ FileNotFoundError: Label encoders not found in either primary or fallback direct
 2025-11-12 11:55:05,113Z - INFO - Loading direction RF model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
 2025-11-12 11:55:05,462Z - INFO - Loading direction XGB model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
 2025-11-12 11:55:05,508Z - INFO - Loading magnitude regression model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 15:03:42,514Z - INFO - ==== predict_V19F_to_db start ====
+2025-11-12 15:03:42,578Z - INFO - Unique index creation skipped: (mysql.connector.errors.ProgrammingError) 1061 (42000): Duplicate key name 'ux_predictETH5_ts_event_model'
+[SQL: 
+        ALTER TABLE predictETH5
+        ADD UNIQUE KEY ux_predictETH5_ts_event_model (ts_utc, event_key, model_tag)
+        ]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+2025-11-12 15:03:42,580Z - INFO - Loading price data starting 2022-01-01
+2025-11-12 15:04:11,047Z - INFO - Price indicators prepared: 1396511 rows
+2025-11-12 15:04:11,094Z - INFO - Removed news ids loaded: 73
+2025-11-12 15:04:11,094Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-12 15:04:11,799Z - WARNING - No dependence label encoder found in ('label_encoder_dependence_15min.pkl', 'label_encoder_dependence_te_15m.pkl', 'label_encoder_dependence_te_15min.pkl')
+2025-11-12 15:04:11,799Z - WARNING - Dependence label encoder not found; dependence values will be encoded as unknown
+2025-11-12 15:04:11,799Z - INFO - Loading direction RF model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-12 15:04:12,096Z - INFO - Loading direction XGB model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-12 15:04:12,154Z - INFO - Loading magnitude regression model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-12 15:04:13,313Z - INFO - Predictions computed: 124 rows
+2025-11-12 15:04:13,314Z - INFO - Class distribution: {1: 65, 2: 58, 0: 1}
+2025-11-12 15:04:13,316Z - INFO - Filtered predictions: 99 kept / 124 total (thr_dir=0.40, thr_mag=2.50)
+2025-11-12 15:04:13,325Z - INFO - Prepared 99 rows for insertion
+2025-11-12 15:04:13,331Z - INFO - Top predictions:
+             ts_utc                                  event                                  event_key  src_id  direction_pred  direction_prob  magnitude_pred  price_entry  price_exit currency_pair priority  is_removed model_tag                                                                                                                                                                                 extra_json
+2025-11-14 14:00:00 ECB Executive Board Member Lane Speech ecb_executive_board_member_lane_speech_eur 2272589               2          0.6914           4.527      1.15782     1.15782       EUR/USD      Low           0  V19F_15m  {"future_mode": true, "thr_dir": 0.4, "thr_mag": 2.5, "rf_p_mean": 0.4049394077919312, "xgb_p_mean": 0.9778182506561279, "vol_pre": 7.238616116785199, "news_impact": 1.6094379124341003}
+2025-11-14 14:00:00               Business Inventories m/m           business_inventories_m_m_mom_usd 2272588               2          0.6914           4.527      1.15782     1.15782       EUR/USD      Low           0  V19F_15m  {"future_mode": true, "thr_dir": 0.4, "thr_mag": 2.5, "rf_p_mean": 0.4049394077919312, "xgb_p_mean": 0.9778182506561279, "vol_pre": 7.238616116785199, "news_impact": 1.6094379124341003}
+2025-11-14 14:00:00                 Retail Inventories m/m             retail_inventories_m_m_mom_usd 2272586               2          0.6914           4.527      1.15782     1.15782       EUR/USD      Low           0  V19F_15m  {"future_mode": true, "thr_dir": 0.4, "thr_mag": 2.5, "rf_p_mean": 0.4049394077919312, "xgb_p_mean": 0.9778182506561279, "vol_pre": 7.238616116785199, "news_impact": 1.6094379124341003}
+2025-11-14 14:00:00     Retail Inventories excl. Autos m/m  retail_inventories_excl_autos_m_m_mom_usd 2272587               2          0.6914           4.527      1.15782     1.15782       EUR/USD      Low           0  V19F_15m  {"future_mode": true, "thr_dir": 0.4, "thr_mag": 2.5, "rf_p_mean": 0.4049394077919312, "xgb_p_mean": 0.9778182506561279, "vol_pre": 7.238616116785199, "news_impact": 1.6094379124341003}
+2025-11-14 14:30:00         EIA Natural Gas Storage Change         eia_natural_gas_storage_change_usd 2285549               2          0.6914           4.527      1.15782     1.15782       EUR/USD      Low           0  V19F_15m {"future_mode": true, "thr_dir": 0.4, "thr_mag": 2.5, "rf_p_mean": 0.4049394077919312, "xgb_p_mean": 0.9778182506561279, "vol_pre": 7.238616116785199, "news_impact": 0.24765897747628585}
+2025-11-12 15:04:13,557Z - INFO - Inserted/updated 99 records into predictETH5
+2025-11-12 15:04:13,558Z - INFO - ==== predict_V19F_to_db completed ====
