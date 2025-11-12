@@ -157,3 +157,13 @@ FileNotFoundError: Label encoders not found in either primary or fallback direct
 2025-11-14 14:00:00               Business Inventories m/m           business_inventories_m_m_mom_usd 2272588               2          0.6914           4.527       1.1568      1.1568       EUR/USD      Low           0  V19F_15m  {"future_mode": true, "thr_dir": 0.4, "thr_mag": 2.5, "rf_p_mean": 0.4049394077919312, "xgb_p_mean": 0.9778182506561279, "vol_pre": 7.238632401852268, "news_impact": 1.6094379124341003}
 2025-11-12 15:39:33,977Z - INFO - Inserted/updated 102 records into predictETH5
 2025-11-12 15:39:33,977Z - INFO - ==== predict_V19F_to_db completed ====
+2025-11-12 16:21:48,686Z - ERROR - Unhandled exception in predict_V19_to_db
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 851, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 827, in main
+    models, model_paths = _load_models()
+                          ^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 115, in _load_models
+    raise FileNotFoundError(f"Model file not found: {path}")
+FileNotFoundError: Model file not found: /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_direction_rf_15min.pkl

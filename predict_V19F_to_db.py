@@ -1,0 +1,854 @@
+import json
+import logging
+import os
+import re
+from datetime import datetime, timedelta
+from hashlib import md5
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+import joblib
+import numpy as np
+import pandas as pd
+import pandas_ta as ta
+import sqlalchemy
+from sqlalchemy import text
+
+# ===================== CONFIG =====================
+FUTURE_MODE = True
+FUTURE_HOURS = 3
+START_DATE = "2024-01-01"
+
+DB_CONN = "mysql+mysqlconnector://GPTFOREX:GPtushechkaForexUshechka@localhost/GPTFOREX" 
+
+CURRENCY_PAIR = "EUR/USD"
+MODEL_TAG = "V19F_15m"
+
+# thresholds
+IMP_TOTAL_THRESHOLD = 0.10
+FUTURE_DIRECTION_PROB_THRESHOLD = 0.40
+FUTURE_MAGNITUDE_THRESHOLD = 2.5
+HISTORY_DIRECTION_PROB_THRESHOLD = 0.65
+HISTORY_MAGNITUDE_THRESHOLD = 7.0
+MAGNITUDE_PRIORITY_THRESHOLD = 6.6227
+
+PRICE_START_DATE = "2022-01-01"
+PRICE_TABLE = "HistDataEURUSD"
+
+MODEL_DIR = "/home/ilyamus/GPTGROKWORK/AITrainer_V5"
+LOG_PATH = os.path.join(MODEL_DIR, "logs", "predict_V19F_to_db.log")
+
+FEATURES: Sequence[str] = (
+    "hour",
+    "day_of_week",
+    "is_weekday",
+    "is_eu_session",
+    "is_us_session",
+    "event_key_encoded",
+    "imp_total",
+    "imp_total_category",
+    "volatility_pre_15m",
+    "RSI_14",
+    "RSI_high",
+    "RSI_low",
+    "SMA_20",
+    "ATR_14",
+    "SMA_365",
+    "trend_365",
+    "SMA_1M",
+    "SMA_3M",
+    "SMA_6M",
+    "SMA_12M",
+    "trend_1M",
+    "trend_3M",
+    "trend_6M",
+    "trend_12M",
+    "SMA_3Q",
+    "SMA_6Q",
+    "SMA_12Q",
+    "trend_3Q",
+    "trend_6Q",
+    "trend_12Q",
+    "correlation",
+    "price_change",
+    "corr_direction",
+    "probability",
+    "observations",
+    "ret_pre_5m",
+    "ret_pre_15m",
+    "sign_ret15",
+    "ret_pre_15m_norm",
+    "accel_5_15",
+)
+
+MODEL_FILES = {
+    "rf": "model_direction_rf_15min.pkl",
+    "xgb": "model_direction_xgb_15min.pkl",
+    "reg": "model_magnitude_15min.pkl",
+    "event_encoder": "label_encoder_event_te_15m.pkl",
+}
+
+# ===================== LOGGING =====================
+os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+logging.basicConfig(
+    filename=LOG_PATH,
+    level=logging.INFO,
+    format="%(asctime)sZ - %(levelname)s - %(message)s",
+)
+
+
+# ===================== HELPERS =====================
+def _create_engine() -> sqlalchemy.Engine:
+    engine = sqlalchemy.create_engine(DB_CONN, pool_pre_ping=True, pool_recycle=3600)
+    with engine.begin() as conn:
+        conn.execute(text("SET time_zone = '+00:00'"))
+        conn.execute(text("SET NAMES utf8mb4"))
+    return engine
+
+
+def _load_models() -> Tuple[Dict[str, Any], Dict[str, str]]:
+    models: Dict[str, Any] = {}
+    paths: Dict[str, str] = {}
+    for key in ("rf", "xgb", "reg"):
+        filename = MODEL_FILES[key]
+        path = os.path.join(MODEL_DIR, filename)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Model file not found: {path}")
+        logging.info("Loading %s model from %s", key, path)
+        models[key] = joblib.load(path)
+        paths[key] = path
+    return models, paths
+
+
+def _load_event_encoder() -> Optional[Any]:
+    filename = os.path.join(MODEL_DIR, MODEL_FILES["event_encoder"])
+    if os.path.exists(filename):
+        logging.info("Loading event label encoder from %s", filename)
+        return joblib.load(filename)
+    logging.warning("Event label encoder not found at %s", filename)
+    return None
+
+
+def _load_prices(engine: sqlalchemy.Engine) -> pd.DataFrame:
+    query = text(
+        """
+        SELECT timestamp_utc, open, high, low, close
+        FROM {table}
+        WHERE timestamp_utc >= :start
+        ORDER BY timestamp_utc
+        """.format(table=PRICE_TABLE)
+    )
+    prices = pd.read_sql(query, engine, params={"start": PRICE_START_DATE})
+    if prices.empty:
+        raise RuntimeError("No price data returned from HistDataEURUSD")
+    prices["timestamp_utc"] = pd.to_datetime(prices["timestamp_utc"], utc=True).dt.tz_convert(None)
+    prices["timestamp_utc"] = prices["timestamp_utc"].dt.round("min")
+    prices = prices.sort_values("timestamp_utc").drop_duplicates(subset=["timestamp_utc"])
+    prices["high_pips"] = prices["high"] * 10000.0
+    prices["low_pips"] = prices["low"] * 10000.0
+    prices["close_pips"] = prices["close"] * 10000.0
+    prices["RSI_14"] = ta.rsi(prices["close"], length=14).fillna(50.0)
+    prices["SMA_20"] = ta.sma(prices["close"], length=20).bfill().fillna(prices["close"].mean())
+    atr = ta.atr(prices["high_pips"], prices["low_pips"], prices["close_pips"], length=14)
+    prices["ATR_14"] = atr.bfill().fillna(atr.mean()).fillna(0.0)
+    return prices
+
+
+def _prepare_daily_trends(prices: pd.DataFrame) -> pd.DataFrame:
+    daily = prices.resample("1D", on="timestamp_utc").agg({"close": "mean"}).dropna().reset_index()
+    daily = daily.sort_values("timestamp_utc")
+    for months in [1, 3, 6, 12]:
+        length = max(2, months * 30)
+        daily[f"SMA_{months}M"] = ta.sma(daily["close"], length=length).bfill()
+        daily[f"trend_{months}M"] = daily["close"].pct_change(periods=length).fillna(0.0)
+    for quarters in [3, 6, 12]:
+        length = max(2, quarters * 90)
+        daily[f"SMA_{quarters}Q"] = ta.sma(daily["close"], length=length).bfill()
+        daily[f"trend_{quarters}Q"] = daily["close"].pct_change(periods=length).fillna(0.0)
+    daily["SMA_365"] = ta.sma(daily["close"], length=365).bfill()
+    daily["trend_365"] = daily["close"].pct_change(periods=365).fillna(0.0)
+    return daily
+
+
+def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
+    base_query = """
+        SELECT id, timestamp_utc, event, event_key, imp_total, imp_calculated, imp_trend,
+               direction, magnitude, actual, dependence
+        FROM news_tradingeconomics
+    """
+    if FUTURE_MODE:
+        query = text(
+            base_query
+            + """
+        WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() AND UTC_TIMESTAMP() + INTERVAL :future_hours HOUR
+          AND imp_total > :imp_total
+        ORDER BY timestamp_utc
+        """
+        )
+        params = {"future_hours": FUTURE_HOURS, "imp_total": IMP_TOTAL_THRESHOLD}
+    else:
+        query = text(
+            base_query
+            + """
+        WHERE timestamp_utc BETWEEN :start AND UTC_TIMESTAMP()
+          AND imp_total > :imp_total
+        ORDER BY timestamp_utc
+        """
+        )
+        params = {"start": START_DATE, "imp_total": IMP_TOTAL_THRESHOLD}
+    df = pd.read_sql(query, engine, params=params)
+    if df.empty:
+        logging.warning("No news fetched for current mode")
+        return df
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True).dt.tz_convert(None)
+    df["timestamp_utc"] = df["timestamp_utc"].dt.round("min")
+    return df
+
+
+def _load_correlations(
+    engine: sqlalchemy.Engine,
+    *,
+    min_ts: datetime,
+    max_ts: datetime,
+    event_keys: Iterable[str],
+) -> pd.DataFrame:
+    keys = [key for key in set(event_keys) if isinstance(key, str) and key]
+    if not keys:
+        return pd.DataFrame()
+    query = (
+        text(
+            """
+        SELECT timestamp_utc, event_key, currency, correlation, price_change, direction AS corr_direction,
+               probability, observations
+        FROM correlation_trends_v2
+        WHERE timestamp_utc BETWEEN :start AND :end
+          AND event_key IN :event_keys
+          AND observations > 100
+          AND probability > 0.5
+        """
+        ).bindparams(sqlalchemy.bindparam("event_keys", expanding=True))
+    )
+    params = {
+        "start": min_ts - timedelta(days=7),
+        "end": max_ts + timedelta(days=7),
+        "event_keys": tuple(keys),
+    }
+    df = pd.read_sql(query, engine, params=params)
+    if df.empty:
+        return df
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True).dt.tz_convert(None)
+    df["timestamp_utc"] = df["timestamp_utc"].dt.round("min")
+    return df
+
+
+def _load_correlation_fallback(engine: sqlalchemy.Engine) -> pd.DataFrame:
+    query = text(
+        """
+        SELECT currency, year, correlation
+        FROM correlation_trends
+        """
+    )
+    try:
+        df = pd.read_sql(query, engine)
+    except Exception as exc:  # pragma: no cover - defensive for missing table
+        logging.warning("Failed to load correlation fallback: %s", exc)
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    df["currency"] = df["currency"].astype(str).str.upper()
+    df["year"] = pd.to_numeric(df["year"], errors="coerce").fillna(0).astype(int)
+    df["correlation"] = pd.to_numeric(df["correlation"], errors="coerce").fillna(0.0)
+    return df
+
+
+def _compute_volatility(prices: pd.DataFrame, news: pd.DataFrame) -> pd.Series:
+    if news.empty:
+        return pd.Series(dtype=float)
+    resampled = (
+        prices.set_index("timestamp_utc")
+        .resample("15min")
+        .agg({"high": "max", "low": "min"})
+        .dropna()
+        .reset_index()
+    )
+    resampled["price_range"] = (resampled["high"] - resampled["low"]) * 10000.0
+    merged = pd.merge_asof(
+        news.sort_values("timestamp_utc"),
+        resampled[["timestamp_utc", "price_range"]].sort_values("timestamp_utc"),
+        on="timestamp_utc",
+        direction="backward",
+        tolerance=pd.Timedelta("1D"),
+    )
+    return merged["price_range"].fillna(resampled["price_range"].mean()).fillna(0.0)
+
+
+def _lookup_price_offset(prices: pd.DataFrame, timestamps: pd.Series, offset_minutes: int) -> pd.Series:
+    if timestamps.empty:
+        return pd.Series(dtype=float)
+    lookup_df = pd.DataFrame(
+        {
+            "lookup_ts": timestamps - pd.Timedelta(minutes=offset_minutes),
+            "_orig_index": timestamps.index,
+        }
+    )
+    price_lookup = prices[["timestamp_utc", "close"]].sort_values("timestamp_utc")
+    merged = pd.merge_asof(
+        lookup_df.sort_values("lookup_ts"),
+        price_lookup,
+        left_on="lookup_ts",
+        right_on="timestamp_utc",
+        direction="backward",
+        tolerance=pd.Timedelta("1D"),
+    )
+    merged = merged.set_index("_orig_index")
+    merged = merged.reindex(timestamps.index)
+    return merged["close"].astype(float)
+
+
+def _encode_event_keys(encoder: Optional[Any], values: pd.Series) -> pd.Series:
+    safe_values = values.fillna("__missing__").astype(str)
+    if encoder is None or not hasattr(encoder, "classes_"):
+        return pd.Series(np.full(len(safe_values), -1, dtype=int), index=safe_values.index)
+    classes = {cls: idx for idx, cls in enumerate(getattr(encoder, "classes_", []))}
+    unknown_idx = classes.get("__unknown__", -1)
+    encoded = safe_values.map(lambda x: classes.get(x, unknown_idx)).fillna(unknown_idx).astype(int)
+    return encoded
+
+
+def _apply_correlation_fallback(news: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFrame:
+    if news.empty:
+        return news
+    corr_cols = ["correlation", "price_change", "corr_direction", "probability", "observations"]
+    for col in corr_cols:
+        news[col] = pd.to_numeric(news.get(col), errors="coerce")
+    if fallback is None or fallback.empty:
+        for col in corr_cols:
+            news[col] = news[col].fillna(0.0)
+        return news
+    fallback = fallback.copy()
+    fallback["currency"] = fallback["currency"].astype(str).str.upper()
+    fallback["year"] = pd.to_numeric(fallback["year"], errors="coerce").fillna(0).astype(int)
+    fallback_map: Dict[Tuple[str, int], float] = {
+        (row.currency, int(row.year)): float(row.correlation)
+        for row in fallback.itertuples()
+    }
+    pair_key = CURRENCY_PAIR.replace("/", "").upper()
+    mask = news["correlation"].isna()
+    if not mask.any():
+        news["correlation"] = news["correlation"].fillna(0.0)
+        news["price_change"] = news["price_change"].fillna(0.0)
+        news["corr_direction"] = news["corr_direction"].fillna(0.0)
+        news["probability"] = news["probability"].fillna(0.0)
+        news["observations"] = news["observations"].fillna(0.0)
+        return news
+    years = news.loc[mask, "timestamp_utc"].dt.year.astype(int)
+    fallback_values = []
+    for idx, year in years.items():
+        value = fallback_map.get((pair_key, year))
+        if value is None:
+            value = fallback_map.get(("ALL", year), 0.0)
+        fallback_values.append((idx, value))
+    for idx, value in fallback_values:
+        news.at[idx, "correlation"] = value
+    news["correlation"] = news["correlation"].fillna(0.0)
+    news["price_change"] = news["price_change"].fillna(0.0)
+    news["corr_direction"] = news["corr_direction"].fillna(0.0)
+    news["probability"] = news["probability"].fillna(0.0)
+    news["observations"] = news["observations"].fillna(0.0)
+    return news
+
+
+def _round_decimal(series: pd.Series, decimals: int) -> pd.Series:
+    return series.apply(lambda x: round(float(x), decimals) if pd.notnull(x) else x)
+
+
+def _normalize_event_text(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value).strip().lower())
+
+
+def _event_norm_hash(normalized_event: str) -> str:
+    if not normalized_event:
+        return ""
+    return md5(normalized_event.encode("utf-8")).hexdigest()
+
+
+def _primary_key_for_row(row: pd.Series) -> Tuple[str, datetime, str, str]:
+    ts = row["ts_utc"]
+    model = row["model_tag"]
+    src_id = row.get("src_id")
+    event_key = row.get("event_key")
+    event_norm = _normalize_event_text(row.get("event"))
+    event_hash = _event_norm_hash(event_norm)
+    if pd.notnull(src_id):
+        return ("src_id", ts, str(int(src_id)), model)
+    if pd.notnull(event_key):
+        return ("event_key", ts, str(event_key), model)
+    return ("event_norm", ts, event_hash, model)
+
+
+def _table_has_updated_at(engine: sqlalchemy.Engine) -> bool:
+    query = text("SHOW COLUMNS FROM predictETH5 LIKE 'updated_at'")
+    with engine.begin() as conn:
+        result = conn.execute(query).fetchone()
+    return result is not None
+
+
+def _serialize_extra_json(row: pd.Series, rf_prob: float, xgb_prob: float, model_paths: Dict[str, str]) -> str:
+    payload = {
+        "future_mode": FUTURE_MODE,
+        "direction_threshold": FUTURE_DIRECTION_PROB_THRESHOLD if FUTURE_MODE else HISTORY_DIRECTION_PROB_THRESHOLD,
+        "magnitude_threshold": FUTURE_MAGNITUDE_THRESHOLD if FUTURE_MODE else HISTORY_MAGNITUDE_THRESHOLD,
+        "rf_prob": float(rf_prob),
+        "xgb_prob": float(xgb_prob),
+        "model_tag": MODEL_TAG,
+        "models": model_paths,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _prepare_predictions(
+    news: pd.DataFrame,
+    prices: pd.DataFrame,
+    daily: pd.DataFrame,
+    models: Dict[str, Any],
+    event_encoder: Optional[Any],
+    engine: sqlalchemy.Engine,
+    model_paths: Dict[str, str],
+    fallback_corr: pd.DataFrame,
+) -> pd.DataFrame:
+    if news.empty:
+        return pd.DataFrame()
+
+    news = news.copy().sort_values("timestamp_utc").reset_index(drop=True)
+    news["hour"] = news["timestamp_utc"].dt.hour.astype(int)
+    news["day_of_week"] = news["timestamp_utc"].dt.dayofweek.astype(int)
+    news["is_weekday"] = (news["day_of_week"] < 5).astype(int)
+    news["is_eu_session"] = (
+        (news["hour"] >= 7) & (news["hour"] <= 16) & (news["is_weekday"] == 1)
+    ).astype(int)
+    news["is_us_session"] = (
+        (news["hour"] >= 12) & (news["hour"] <= 21) & (news["is_weekday"] == 1)
+    ).astype(int)
+
+    news["imp_total"] = pd.to_numeric(news["imp_total"], errors="coerce").fillna(0.0)
+    news["imp_total_category"] = (
+        pd.cut(
+            news["imp_total"],
+            bins=[0.0, 0.3, 0.6, 1.0],
+            labels=[0, 1, 2],
+            include_lowest=True,
+            right=True,
+        )
+        .astype("float")
+        .fillna(2.0)
+    )
+
+    news["volatility_pre_15m"] = _compute_volatility(prices, news)
+
+    news["event_key_encoded"] = _encode_event_keys(event_encoder, news["event_key"])
+
+    price_cols = ["timestamp_utc", "close", "RSI_14", "SMA_20", "ATR_14"]
+    merged = pd.merge_asof(
+        news.sort_values("timestamp_utc"),
+        prices[price_cols].sort_values("timestamp_utc"),
+        on="timestamp_utc",
+        direction="backward",
+        tolerance=pd.Timedelta("1D"),
+    )
+    news[["price_entry", "RSI_14", "SMA_20", "ATR_14"]] = merged[["close", "RSI_14", "SMA_20", "ATR_14"]]
+
+    news = pd.merge_asof(
+        news.sort_values("timestamp_utc"),
+        daily[[
+            "timestamp_utc",
+            "SMA_1M",
+            "SMA_3M",
+            "SMA_6M",
+            "SMA_12M",
+            "trend_1M",
+            "trend_3M",
+            "trend_6M",
+            "trend_12M",
+            "SMA_3Q",
+            "SMA_6Q",
+            "SMA_12Q",
+            "trend_3Q",
+            "trend_6Q",
+            "trend_12Q",
+            "SMA_365",
+            "trend_365",
+        ]].sort_values("timestamp_utc"),
+        on="timestamp_utc",
+        direction="backward",
+        tolerance=pd.Timedelta("1D"),
+    )
+
+    daily_cols = [
+        "SMA_365",
+        "trend_365",
+        "SMA_1M",
+        "SMA_3M",
+        "SMA_6M",
+        "SMA_12M",
+        "trend_1M",
+        "trend_3M",
+        "trend_6M",
+        "trend_12M",
+        "SMA_3Q",
+        "SMA_6Q",
+        "SMA_12Q",
+        "trend_3Q",
+        "trend_6Q",
+        "trend_12Q",
+    ]
+    for col in daily_cols:
+        if col in news.columns:
+            if "trend" in col:
+                news[col] = pd.to_numeric(news[col], errors="coerce").fillna(0.0)
+            else:
+                news[col] = pd.to_numeric(news[col], errors="coerce").bfill().fillna(0.0)
+        else:
+            news[col] = 0.0
+
+    correlations = _load_correlations(
+        engine,
+        min_ts=news["timestamp_utc"].min(),
+        max_ts=news["timestamp_utc"].max(),
+        event_keys=news["event_key"].dropna().unique(),
+    )
+    if not correlations.empty:
+        news = news.merge(
+            correlations,
+            on=["timestamp_utc", "event_key"],
+            how="left",
+            suffixes=("", "_corr"),
+        )
+        for col in ["currency_corr", "timestamp_utc_corr"]:
+            if col in news.columns:
+                news.drop(columns=[col], inplace=True)
+    news = _apply_correlation_fallback(news, fallback_corr)
+
+    news["RSI_high"] = (pd.to_numeric(news["RSI_14"], errors="coerce") >= 60).astype(int)
+    news["RSI_low"] = (pd.to_numeric(news["RSI_14"], errors="coerce") <= 40).astype(int)
+    news["ATR_14"] = pd.to_numeric(news["ATR_14"], errors="coerce").fillna(0.0)
+    news["price_entry"] = pd.to_numeric(news["price_entry"], errors="coerce").fillna(method="ffill").fillna(0.0)
+
+    price_pre_5 = _lookup_price_offset(prices, news["timestamp_utc"], 5).fillna(news["price_entry"])
+    price_pre_15 = _lookup_price_offset(prices, news["timestamp_utc"], 15).fillna(news["price_entry"])
+    pip_factor = 10000.0
+    news["ret_pre_5m"] = ((news["price_entry"] - price_pre_5) * pip_factor).fillna(0.0)
+    news["ret_pre_15m"] = ((news["price_entry"] - price_pre_15) * pip_factor).fillna(0.0)
+    news["sign_ret15"] = np.sign(news["ret_pre_15m"]).astype(int)
+    denom = news["volatility_pre_15m"].replace(0, np.nan)
+    news["ret_pre_15m_norm"] = (
+        news["ret_pre_15m"] / denom
+    ).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    news["accel_5_15"] = news["ret_pre_5m"] - (news["ret_pre_15m"] / 3.0)
+
+    feature_df = news[list(FEATURES)].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
+    rf_probs = models["rf"].predict_proba(feature_df)
+    xgb_probs = models["xgb"].predict_proba(feature_df)
+    ensemble_probs = (rf_probs + xgb_probs) / 2.0
+    direction_prob = ensemble_probs.max(axis=1)
+    direction_pred = ensemble_probs.argmax(axis=1)
+
+    reg_raw = models["reg"].predict(feature_df)
+    reg_raw = np.maximum(reg_raw, 0.0)
+    magnitude_pred = np.expm1(reg_raw)
+
+    news["direction_pred"] = direction_pred.astype(int)
+    news["direction_prob"] = direction_prob.astype(float)
+    news["magnitude_pred"] = magnitude_pred.astype(float)
+    news["rf_prob_pred"] = [rf_probs[i, dp] for i, dp in enumerate(direction_pred)]
+    news["xgb_prob_pred"] = [xgb_probs[i, dp] for i, dp in enumerate(direction_pred)]
+
+    price_exit = news["price_entry"].copy()
+    pip_step = news["magnitude_pred"] * 0.0001
+    mask_up = news["direction_pred"] == 2
+    mask_down = news["direction_pred"] == 0
+    price_exit.loc[mask_up] = news.loc[mask_up, "price_entry"] + pip_step.loc[mask_up]
+    price_exit.loc[mask_down] = news.loc[mask_down, "price_entry"] - pip_step.loc[mask_down]
+    news["price_exit"] = price_exit
+
+    news["priority"] = np.where(
+        news["magnitude_pred"] >= MAGNITUDE_PRIORITY_THRESHOLD,
+        "High",
+        "Low",
+    )
+
+    news["currency_pair"] = CURRENCY_PAIR
+    news["model_tag"] = MODEL_TAG
+
+    news["extra_json"] = [
+        _serialize_extra_json(row, row["rf_prob_pred"], row["xgb_prob_pred"], model_paths)
+        for _, row in news.iterrows()
+    ]
+
+    return news
+
+
+def _filter_predictions(preds: pd.DataFrame) -> pd.DataFrame:
+    if preds.empty:
+        return preds
+    if FUTURE_MODE:
+        direction_thr = FUTURE_DIRECTION_PROB_THRESHOLD
+        magnitude_thr = FUTURE_MAGNITUDE_THRESHOLD
+    else:
+        direction_thr = HISTORY_DIRECTION_PROB_THRESHOLD
+        magnitude_thr = HISTORY_MAGNITUDE_THRESHOLD
+    mask = (preds["direction_prob"] > direction_thr) & (
+        preds["magnitude_pred"] > magnitude_thr
+    )
+    return preds.loc[mask].copy()
+
+
+def _prepare_insert_frame(preds: pd.DataFrame) -> pd.DataFrame:
+    if preds.empty:
+        return preds
+    preds = preds.copy()
+    preds.rename(columns={"timestamp_utc": "ts_utc", "id": "src_id"}, inplace=True)
+    preds["src_id"] = pd.to_numeric(preds["src_id"], errors="coerce")
+
+    preds["ts_utc"] = pd.to_datetime(preds["ts_utc"], errors="coerce")
+    preds["ts_utc"] = preds["ts_utc"].dt.tz_localize(None)
+    preds["ts_utc"] = preds["ts_utc"].dt.round("min")
+
+    preds["is_removed"] = 0
+
+    preds = preds.sort_values("direction_prob", ascending=False)
+
+    deduped_rows: List[pd.Series] = []
+    seen: Set[Tuple[str, datetime, str, str]] = set()
+    for _, row in preds.iterrows():
+        key = _primary_key_for_row(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_rows.append(row)
+
+    if not deduped_rows:
+        return pd.DataFrame(
+            columns=[
+                "ts_utc",
+                "event",
+                "event_key",
+                "src_id",
+                "direction_pred",
+                "direction_prob",
+                "magnitude_pred",
+                "price_entry",
+                "price_exit",
+                "currency_pair",
+                "priority",
+                "is_removed",
+                "model_tag",
+                "extra_json",
+            ]
+        )
+
+    preds = pd.DataFrame(deduped_rows)
+
+    preds["direction_prob"] = _round_decimal(preds["direction_prob"], 4)
+    preds["magnitude_pred"] = _round_decimal(preds["magnitude_pred"], 3)
+    preds["price_entry"] = _round_decimal(preds["price_entry"], 5)
+    preds["price_exit"] = _round_decimal(preds["price_exit"], 5)
+
+    return preds[
+        [
+            "ts_utc",
+            "event",
+            "event_key",
+            "src_id",
+            "direction_pred",
+            "direction_prob",
+            "magnitude_pred",
+            "price_entry",
+            "price_exit",
+            "currency_pair",
+            "priority",
+            "is_removed",
+            "model_tag",
+            "extra_json",
+        ]
+    ]
+
+
+def _convert_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (float, np.floating)) and np.isnan(value):
+        return None
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _fetch_existing_record(
+    conn: sqlalchemy.engine.Connection,
+    *,
+    ts_utc: datetime,
+    model_tag: str,
+    src_id: Optional[Any],
+    event_key: Optional[str],
+    event_norm: str,
+) -> Optional[int]:
+    if src_id is not None:
+        query = text(
+            """
+            SELECT id FROM predictETH5
+            WHERE ts_utc = :ts
+              AND model_tag = :model
+              AND src_id IS NOT NULL
+              AND src_id = :src_id
+            LIMIT 1
+            """
+        )
+        result = conn.execute(query, {"ts": ts_utc, "model": model_tag, "src_id": src_id}).fetchone()
+        if result:
+            return result[0]
+
+    if event_key:
+        query = text(
+            """
+            SELECT id FROM predictETH5
+            WHERE ts_utc = :ts
+              AND model_tag = :model
+              AND event_key IS NOT NULL
+              AND event_key = :event_key
+            LIMIT 1
+            """
+        )
+        result = conn.execute(query, {"ts": ts_utc, "model": model_tag, "event_key": event_key}).fetchone()
+        if result:
+            return result[0]
+
+    if event_norm:
+        query = text(
+            """
+            SELECT id, event FROM predictETH5
+            WHERE ts_utc = :ts
+              AND model_tag = :model
+              AND event IS NOT NULL
+            """
+        )
+        rows = conn.execute(query, {"ts": ts_utc, "model": model_tag}).fetchall()
+        for row in rows:
+            existing_event = row[1]
+            if _normalize_event_text(existing_event) == event_norm:
+                return row[0]
+
+    return None
+
+
+def _insert_predictions(engine: sqlalchemy.Engine, df: pd.DataFrame, update_has_col: bool) -> None:
+    if df.empty:
+        logging.info("No predictions to insert")
+        return
+
+    insert_sql = text(
+        """
+        INSERT INTO predictETH5 (
+            ts_utc,
+            event,
+            event_key,
+            src_id,
+            direction_pred,
+            direction_prob,
+            magnitude_pred,
+            price_entry,
+            price_exit,
+            currency_pair,
+            priority,
+            is_removed,
+            model_tag,
+            extra_json
+        ) VALUES (
+            :ts_utc,
+            :event,
+            :event_key,
+            :src_id,
+            :direction_pred,
+            :direction_prob,
+            :magnitude_pred,
+            :price_entry,
+            :price_exit,
+            :currency_pair,
+            :priority,
+            :is_removed,
+            :model_tag,
+            :extra_json
+        )
+        """
+    )
+
+    update_sql = text(
+        """
+        UPDATE predictETH5
+        SET direction_pred = :direction_pred,
+            direction_prob = :direction_prob,
+            magnitude_pred = :magnitude_pred,
+            price_entry = :price_entry,
+            price_exit = :price_exit,
+            priority = :priority,
+            is_removed = :is_removed,
+            extra_json = :extra_json{updated}
+        WHERE id = :id
+        """.format(updated=", updated_at = UTC_TIMESTAMP()" if update_has_col else "")
+    )
+
+    with engine.begin() as conn:
+        for _, row in df.iterrows():
+            ts_utc = row["ts_utc"]
+            model_tag = row["model_tag"]
+            src_id = _convert_value(row.get("src_id"))
+            event_key = row.get("event_key")
+            event_norm = _normalize_event_text(row.get("event"))
+            existing_id = _fetch_existing_record(
+                conn,
+                ts_utc=ts_utc,
+                model_tag=model_tag,
+                src_id=src_id,
+                event_key=event_key,
+                event_norm=event_norm,
+            )
+            payload = {k: _convert_value(v) for k, v in row.items()}
+            if existing_id is None:
+                conn.execute(insert_sql, payload)
+            else:
+                payload["id"] = existing_id
+                conn.execute(update_sql, payload)
+
+
+# ===================== MAIN =====================
+def main() -> None:
+    engine = _create_engine()
+    models, model_paths = _load_models()
+    event_encoder = _load_event_encoder()
+    prices = _load_prices(engine)
+    daily = _prepare_daily_trends(prices)
+    fallback_corr = _load_correlation_fallback(engine)
+    news = _load_news(engine)
+    preds = _prepare_predictions(
+        news,
+        prices,
+        daily,
+        models,
+        event_encoder,
+        engine,
+        model_paths,
+        fallback_corr,
+    )
+    preds = _filter_predictions(preds)
+    insert_df = _prepare_insert_frame(preds)
+    has_updated = _table_has_updated_at(engine)
+    _insert_predictions(engine, insert_df, has_updated)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        logging.exception("Unhandled exception in predict_V19_to_db")
+        raise
