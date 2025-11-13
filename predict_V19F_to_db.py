@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from hashlib import md5
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -17,7 +17,7 @@ from sqlalchemy import inspect, text
 FUTURE_MODE = True
 FUTURE_HOURS = 1
 START_DATE = "2024-01-01"
-FUTURE_PAST_MINUTES = 150  # брать ещё последние 10 минут
+FUTURE_PAST_MINUTES = 151 # брать ещё последние 10 минут
 
 DB_CONN = "mysql+mysqlconnector://GPTFOREX:GPtushechkaForexUshechka@localhost/GPTFOREX" 
 
@@ -25,7 +25,7 @@ CURRENCY_PAIR = "EUR/USD"
 MODEL_TAG = "V19F_15m"
 
 # thresholds
-IMP_TOTAL_THRESHOLD = 0.0 #0.10
+IMP_TOTAL_THRESHOLD = 0.10 #0.10
 FUTURE_DIRECTION_PROB_THRESHOLD = 0.30 #0.40
 FUTURE_MAGNITUDE_THRESHOLD = 1.25 #2.5
 HISTORY_DIRECTION_PROB_THRESHOLD = 0.65
@@ -45,8 +45,13 @@ FEATURES: Sequence[str] = (
     "is_eu_session",
     "is_us_session",
     "event_key_encoded",
-    "imp_total",
-    "imp_total_category",
+    "text_len",
+    "sent_finbert",
+    "sent_label_id",
+    "sent_pos",
+    "sent_neg",
+    "sent_pos_x_accel",
+    "imp_year_vol",
     "volatility_pre_15m",
     "RSI_14",
     "RSI_high",
@@ -70,10 +75,6 @@ FEATURES: Sequence[str] = (
     "trend_6Q",
     "trend_12Q",
     "correlation",
-    "price_change",
-    "corr_direction",
-    "probability",
-    "observations",
     "ret_pre_5m",
     "ret_pre_15m",
     "sign_ret15",
@@ -293,8 +294,7 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     )
 
     # "Сейчас" тоже naive UTC, никаких tz='UTC'
-    from datetime import datetime
-    now_utc = pd.Timestamp(datetime.utcnow()).floor("min")
+    now_utc = pd.Timestamp.now(tz=UTC).floor("min").tz_localize(None)
     start_utc = now_utc - pd.Timedelta(minutes=FUTURE_PAST_MINUTES)
     end_utc   = now_utc + pd.Timedelta(hours=FUTURE_HOURS)
 
@@ -507,6 +507,14 @@ def _normalize_event_text(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", str(value).strip().lower())
 
 
+def _get_first_existing_series(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[pd.Series]:
+    for col in candidates:
+        if col in df.columns:
+            return df[col]
+    return None
+
+
+
 def _event_norm_hash(normalized_event: str) -> str:
     if not normalized_event:
         return ""
@@ -570,6 +578,47 @@ def _prepare_predictions(
     news["is_us_session"] = (
         (news["hour"] >= 12) & (news["hour"] <= 21) & (news["is_weekday"] == 1)
     ).astype(int)
+    sent_score_series = _get_first_existing_series(
+        news, ("sent_finbert", "sentiment_score", "sentiment_value", "sentiment")
+    )
+    if sent_score_series is None:
+        news["sent_finbert"] = 0.0
+    else:
+        news["sent_finbert"] = pd.to_numeric(sent_score_series, errors="coerce").fillna(0.0)
+
+    label_series = _get_first_existing_series(
+        news, ("sent_label", "sentiment_label", "sentiment_class")
+    )
+    if label_series is None:
+        sent_label = pd.Series(["neu"] * len(news), index=news.index)
+    else:
+        sent_label = label_series.fillna("neu").astype(str)
+    sent_label = sent_label.str.lower().replace("", "neu")
+    label_map = {"neg": 0, "neu": 1, "pos": 2}
+    news["sent_label_id"] = sent_label.map(label_map).fillna(1).astype(int)
+    news["sent_pos"] = (news["sent_label_id"] == 2).astype(int)
+    news["sent_neg"] = (news["sent_label_id"] == 0).astype(int)
+
+    text_source = _get_first_existing_series(
+        news, ("text_clean", "text", "description", "event")
+    )
+    if text_source is None:
+        news["text_len"] = 0
+    else:
+        text_len = text_source.fillna("").astype(str).str.len()
+        clip_value = text_len.quantile(0.99)
+        if pd.isna(clip_value):
+            clip_value = text_len.max()
+        if pd.isna(clip_value):
+            news["text_len"] = 0
+        else:
+            news["text_len"] = text_len.clip(upper=float(clip_value)).astype(int)
+
+    if "imp_year_vol" in news.columns:
+        news["imp_year_vol"] = pd.to_numeric(news["imp_year_vol"], errors="coerce").fillna(0.0)
+    else:
+        news["imp_year_vol"] = 0.0
+
 
     news["imp_total"] = pd.to_numeric(news["imp_total"], errors="coerce").fillna(0.0)
     news["imp_total_category"] = (
@@ -672,7 +721,7 @@ def _prepare_predictions(
     news["RSI_high"] = (pd.to_numeric(news["RSI_14"], errors="coerce") >= 60).astype(int)
     news["RSI_low"] = (pd.to_numeric(news["RSI_14"], errors="coerce") <= 40).astype(int)
     news["ATR_14"] = pd.to_numeric(news["ATR_14"], errors="coerce").fillna(0.0)
-    news["price_entry"] = pd.to_numeric(news["price_entry"], errors="coerce").fillna(method="ffill").fillna(0.0)
+    news["price_entry"] = pd.to_numeric(news["price_entry"], errors="coerce").ffill().fillna(0.0)
 
     price_pre_5 = _lookup_price_offset(prices, news["timestamp_utc"], 5).fillna(news["price_entry"])
     price_pre_15 = _lookup_price_offset(prices, news["timestamp_utc"], 15).fillna(news["price_entry"])
@@ -685,6 +734,9 @@ def _prepare_predictions(
         news["ret_pre_15m"] / denom
     ).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     news["accel_5_15"] = news["ret_pre_5m"] - (news["ret_pre_15m"] / 3.0)
+    news["sent_pos_x_accel"] = (
+        news["sent_finbert"].clip(lower=0.0) * news["accel_5_15"]
+    ).astype(float)
 
     feature_df = news[list(FEATURES)].apply(pd.to_numeric, errors="coerce").fillna(0.0)
 
