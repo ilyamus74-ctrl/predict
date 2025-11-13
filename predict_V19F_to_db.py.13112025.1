@@ -229,37 +229,54 @@ def _get_first_existing_column(
 
 def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     table = "news_tradingeconomics"
-
-    def _get_first_existing_column(engine: sqlalchemy.Engine, table: str, candidates: Sequence[str]) -> Optional[str]:
-        inspector = inspect(engine)
-        cols = {c["name"] for c in inspector.get_columns(table)}
-        for c in candidates:
-            if c in cols:
-                return c
-        return None
-
-    event_col      = _get_first_existing_column(engine, table, ["headline", "event", "event_title", "title", "name"])
-    event_key_col  = _get_first_existing_column(engine, table, ["event_key", "eventId", "event_id", "event_code", "eventCode", "key"])
-
-    # важность: сначала явные поля, иначе impact_score
-    imp_total_col  = _get_first_existing_column(engine, table, ["imp_total", "importance_total", "importance", "impact_total"])
-    impact_score_col = _get_first_existing_column(engine, table, ["impact_score"])
-
-    imp_calc_col   = _get_first_existing_column(engine, table, ["imp_calculated", "calc_importance", "importance_calc"])
-    imp_trend_col  = _get_first_existing_column(engine, table, ["imp_trend", "importance_trend"])
-    direction_col  = _get_first_existing_column(engine, table, ["direction"])
-    magnitude_col  = _get_first_existing_column(engine, table, ["magnitude", "magnitude_pips", "price_move_pips"])
-    actual_col     = _get_first_existing_column(engine, table, ["actual", "actual_value", "value"])
-    dependence_col = _get_first_existing_column(engine, table, ["dependence", "dependency", "dependent"])
+    event_col = _get_first_existing_column(
+        engine,
+        table,
+        ["event", "event_name", "event_title", "headline", "title", "name"],
+    )
+    event_key_col = _get_first_existing_column(
+        engine,
+        table,
+        ["event_key", "eventId", "event_id", "event_code", "eventCode", "key"],
+    )
+    imp_total_col = _get_first_existing_column(
+        engine,
+        table,
+        ["imp_total", "importance_total", "importance", "impact_total"],
+    )
+    imp_calc_col = _get_first_existing_column(
+        engine,
+        table,
+        ["imp_calculated", "calc_importance", "importance_calc"],
+    )
+    imp_trend_col = _get_first_existing_column(
+        engine,
+        table,
+        ["imp_trend", "importance_trend"],
+    )
+    direction_col = _get_first_existing_column(engine, table, ["direction"])
+    magnitude_col = _get_first_existing_column(
+        engine,
+        table,
+        ["magnitude", "magnitude_pips", "price_move_pips"],
+    )
+    actual_col = _get_first_existing_column(
+        engine,
+        table,
+        ["actual", "actual_value", "value"],
+    )
+    dependence_col = _get_first_existing_column(
+        engine,
+        table,
+        ["dependence", "dependency", "dependent"],
+    )
 
     select_parts = [
         "id",
         "timestamp_utc",
         f"{event_col} AS event" if event_col else "NULL AS event",
         f"{event_key_col} AS event_key" if event_key_col else "NULL AS event_key",
-        # imp_total: если «родного» нет — берём impact_score
-        (f"{imp_total_col} AS imp_total" if imp_total_col
-         else (f"{impact_score_col} AS imp_total" if impact_score_col else "0.0 AS imp_total")),
+        f"{imp_total_col} AS imp_total" if imp_total_col else "NULL AS imp_total",
         f"{imp_calc_col} AS imp_calculated" if imp_calc_col else "NULL AS imp_calculated",
         f"{imp_trend_col} AS imp_trend" if imp_trend_col else "NULL AS imp_trend",
         f"{direction_col} AS direction" if direction_col else "NULL AS direction",
@@ -269,80 +286,125 @@ def _load_news(engine: sqlalchemy.Engine) -> pd.DataFrame:
     ]
     base_select = ", ".join(select_parts)
 
-    # окно: прошлые N минут + будущие H часов
-    query = text(
-        f"""
-        SELECT {base_select}
-        FROM {table}
-        WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() - INTERVAL :past_m MINUTE
-                                AND UTC_TIMESTAMP() + INTERVAL :future_h HOUR
-        ORDER BY timestamp_utc
+
+    if FUTURE_MODE:
+        query = text(
+            f"""
+            SELECT {base_select}
+            FROM {table}
+            WHERE timestamp_utc BETWEEN UTC_TIMESTAMP() - INTERVAL :past_minutes MINUTE
+                                      AND UTC_TIMESTAMP() + INTERVAL :future_hours HOUR
+            ORDER BY timestamp_utc
         """
-    )
-    params = {"past_m": FUTURE_PAST_MINUTES, "future_h": FUTURE_HOURS}
+        )
+        params = {"future_hours": FUTURE_HOURS, "past_minutes": FUTURE_PAST_MINUTES}
+
+    else:
+        query = text(
+            f"""
+            SELECT {base_select}
+            FROM {table}
+            WHERE timestamp_utc BETWEEN :start AND UTC_TIMESTAMP()
+            ORDER BY timestamp_utc
+        """
+        )
+        params = {"start": START_DATE}
 
     df = pd.read_sql(query, engine, params=params)
     if df.empty:
         logging.warning("No news fetched for current mode")
         return df
-    # Время в датафрейме → naive UTC + округление
-    df["timestamp_utc"] = (
-        pd.to_datetime(df["timestamp_utc"], utc=True)
-          .dt.tz_convert(None)          # убрать таймзону
-          .dt.round("min")
-    )
 
-    # "Сейчас" тоже naive UTC, никаких tz='UTC'
-    from datetime import datetime
-    now_utc = pd.Timestamp(datetime.utcnow()).floor("min")
-    start_utc = now_utc - pd.Timedelta(minutes=FUTURE_PAST_MINUTES)
-    end_utc   = now_utc + pd.Timedelta(hours=FUTURE_HOURS)
+    df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True).dt.tz_convert(None)
+    df["timestamp_utc"] = df["timestamp_utc"].dt.round("min")
 
+    now_utc = pd.Timestamp.utcnow().floor("min")
+    if now_utc.tzinfo is not None:
+        now_utc = now_utc.tz_localize(None)
     raw_cnt = len(df)
-    df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+    if FUTURE_MODE:
+        start_utc = now_utc - pd.Timedelta(minutes=FUTURE_PAST_MINUTES)
+        end_utc = now_utc + pd.Timedelta(hours=FUTURE_HOURS)
+        df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+    else:
+        start_utc = pd.to_datetime(START_DATE)
+        end_utc = now_utc
+        df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
     after_time_cnt = len(df)
 
-    # числовые поля
-    for col in ["imp_total", "imp_calculated", "imp_trend", "direction", "magnitude", "actual"]:
-        if col not in df:
-            df[col] = 0.0
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-    # нормализация важности (если >1 — min-max в [0..1])
-    if after_time_cnt:
-        mx = float(df["imp_total"].abs().max())
-        if mx > 1.0:
-            mn = float(df["imp_total"].min())
-            span = (mx - mn) if mx > mn else 1.0
-            df["imp_total"] = ((df["imp_total"] - mn) / span).clip(0.0, 1.0)
-
-    # НЕ фильтруем по imp_total здесь (IMP_TOTAL_THRESHOLD=0.0)
+    if FUTURE_MODE and IMP_TOTAL_THRESHOLD > 0:
+        df = df[df["imp_total"] > IMP_TOTAL_THRESHOLD].copy()
     after_imp_cnt = len(df)
 
-    # текстовые поля
+    logging.info(
+        "news window: raw=%d, after_time=%d, after_imp=%d, time=[%s..%s]",
+        raw_cnt,
+        after_time_cnt,
+        after_imp_cnt,
+        start_utc,
+        end_utc,
+    )
+
+
+    for col, default, to_numeric in [
+        ("imp_total", 0.0, True),
+        ("imp_calculated", 0.0, True),
+        ("imp_trend", 0.0, True),
+        ("direction", 0.0, True),
+        ("magnitude", 0.0, True),
+        ("actual", 0.0, True),
+    ]:
+        if col not in df:
+            df[col] = default
+        if to_numeric:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default)
+
     if "dependence" not in df:
         df["dependence"] = "unknown"
     df["dependence"] = df["dependence"].fillna("unknown").astype(str)
+
     if "event" not in df:
         df["event"] = ""
     if "event_key" not in df:
         df["event_key"] = None
 
+    if imp_total_col is None:
+        raw_imp_col = _get_first_existing_column(
+            engine, table, ["importance", "importance_level", "impact"]
+        )
+        if raw_imp_col:
+            ids = tuple(df["id"].tolist()) if len(df) else tuple([-1])
+            imp_df = pd.read_sql(
+                text(
+                    f"SELECT id, {raw_imp_col} AS _raw_imp FROM {table} WHERE id IN :ids"
+                ).bindparams(sqlalchemy.bindparam("ids", expanding=True)),
+                engine,
+                params={"ids": ids},
+            )
+            df = df.merge(imp_df, on="id", how="left")
+            df["imp_total"] = df["_raw_imp"].astype(float) / 3.0
+            df.drop(columns=["_raw_imp"], inplace=True)
+        df["imp_total"] = pd.to_numeric(df["imp_total"], errors="coerce").fillna(0.0)
+
+    if FUTURE_MODE:
+        df = df[df["imp_total"] > IMP_TOTAL_THRESHOLD].copy()
+
     logging.info(
-        "news window: raw=%d, after_time=%d, after_imp=%d, time=[%s..%s]",
-        raw_cnt, after_time_cnt, after_imp_cnt, start_utc, end_utc
+        "news_tradingeconomics mapping: event=%s, event_key=%s, imp_total=%s, imp_calculated=%s, imp_trend=%s, direction=%s, magnitude=%s, actual=%s, dependence=%s; rows=%d",
+        event_col,
+        event_key_col,
+        imp_total_col,
+        imp_calc_col,
+        imp_trend_col,
+        direction_col,
+        magnitude_col,
+        actual_col,
+        dependence_col,
+        len(df),
     )
-    logging.info(
-        "news_tradingeconomics mapping: event=%s, event_key=%s, imp_total_src=%s, rows=%d",
-        event_col, event_key_col, (imp_total_col or impact_score_col or "const0"), len(df)
-    )
-    logging.info(
-        "news window: raw=%d, after_time=%d, time=[%s..%s], df.min=%s, df.max=%s",
-        raw_cnt, after_time_cnt, start_utc, end_utc,
-        df["timestamp_utc"].min() if after_time_cnt else None,
-        df["timestamp_utc"].max() if after_time_cnt else None,
-    )
+
     return df
+
 
 def _load_correlations(
     engine: sqlalchemy.Engine,
@@ -706,7 +768,7 @@ def _prepare_predictions(
 
     price_exit = news["price_entry"].copy()
     pip_step = news["magnitude_pred"] * 0.0001
-    mask_up = news["direction_pred"] == 1
+    mask_up = news["direction_pred"] == 2
     mask_down = news["direction_pred"] == 0
     price_exit.loc[mask_up] = news.loc[mask_up, "price_entry"] + pip_step.loc[mask_up]
     price_exit.loc[mask_down] = news.loc[mask_down, "price_entry"] - pip_step.loc[mask_down]
@@ -979,16 +1041,6 @@ def main() -> None:
         engine,
         model_paths,
         fallback_corr,
-    )
-    logging.info(
-        "preds candidates: n=%d; dir_prob[min=%.3f max=%.3f mean=%.3f]; mag[min=%.3f max=%.3f mean=%.3f]",
-        0 if preds is None else len(preds),
-        0.0 if preds is None or preds.empty else float(preds["direction_prob"].min()),
-        0.0 if preds is None or preds.empty else float(preds["direction_prob"].max()),
-        0.0 if preds is None or preds.empty else float(preds["direction_prob"].mean()),
-        0.0 if preds is None or preds.empty else float(preds["magnitude_pred"].min()),
-        0.0 if preds is None or preds.empty else float(preds["magnitude_pred"].max()),
-        0.0 if preds is None or preds.empty else float(preds["magnitude_pred"].mean()),
     )
     preds = _filter_predictions(preds)
     insert_df = _prepare_insert_frame(preds)

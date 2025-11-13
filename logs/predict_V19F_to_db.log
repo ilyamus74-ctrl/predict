@@ -1,78 +1,8 @@
-2025-11-12 21:32:49,225Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:32:50,142Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:32:50,191Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:32:50,209Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:33:19,759Z - INFO - news window: raw=18, after_time=18, after_imp=0, time=[2025-11-12 17:03:00..2025-11-12 20:33:00]
-2025-11-12 21:33:19,767Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:33:19,770Z - INFO - No predictions to insert
-2025-11-12 21:34:11,444Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:34:12,346Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:34:12,392Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:34:12,411Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:34:40,918Z - INFO - news window: raw=18, after_time=18, after_imp=0, time=[2025-11-12 17:04:00..2025-11-12 20:34:00]
-2025-11-12 21:34:40,924Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:34:40,927Z - INFO - No predictions to insert
-2025-11-12 21:36:12,183Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:36:13,221Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:36:13,279Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:36:13,307Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:36:42,013Z - INFO - news window: raw=18, after_time=18, after_imp=0, time=[2025-11-12 17:06:00..2025-11-12 20:36:00]
-2025-11-12 21:36:42,023Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:36:42,026Z - INFO - No predictions to insert
-2025-11-12 21:38:11,331Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:38:12,376Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:38:12,437Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:38:12,454Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:38:39,128Z - INFO - news window: raw=18, after_time=18, after_imp=0, time=[2025-11-12 17:08:00..2025-11-12 20:38:00]
-2025-11-12 21:38:39,137Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:38:39,140Z - INFO - No predictions to insert
-2025-11-12 21:40:11,569Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:40:12,618Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:40:12,681Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:40:12,709Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:40:45,509Z - INFO - news window: raw=17, after_time=17, after_imp=0, time=[2025-11-12 17:10:00..2025-11-12 20:40:00]
-2025-11-12 21:40:45,515Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:40:45,518Z - INFO - No predictions to insert
-2025-11-12 21:42:12,027Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:42:13,200Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:42:13,266Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:42:13,316Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:42:39,866Z - INFO - news window: raw=14, after_time=14, after_imp=0, time=[2025-11-12 17:12:00..2025-11-12 20:42:00]
-2025-11-12 21:42:39,875Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:42:39,878Z - INFO - No predictions to insert
-2025-11-12 21:44:10,985Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:44:11,869Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:44:11,925Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:44:11,944Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:44:42,517Z - INFO - news window: raw=14, after_time=14, after_imp=0, time=[2025-11-12 17:14:00..2025-11-12 20:44:00]
-2025-11-12 21:44:42,527Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:44:42,530Z - INFO - No predictions to insert
-2025-11-12 21:45:05,216Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:45:06,249Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:45:06,298Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:45:06,314Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:45:56,436Z - INFO - news window: raw=14, after_time=14, after_imp=14, time=[2025-11-12 17:15:00..2025-11-12 20:45:00]
-2025-11-12 21:45:56,444Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:45:56,447Z - INFO - No predictions to insert
-2025-11-12 21:46:11,564Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:46:12,541Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:46:12,594Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:46:12,617Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:46:51,762Z - INFO - news window: raw=14, after_time=14, after_imp=14, time=[2025-11-12 17:16:00..2025-11-12 20:46:00]
-2025-11-12 21:46:51,776Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:46:51,779Z - INFO - No predictions to insert
-2025-11-12 21:48:11,751Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:48:12,696Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:48:12,755Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:48:12,778Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:48:44,009Z - INFO - news window: raw=13, after_time=13, after_imp=13, time=[2025-11-12 17:18:00..2025-11-12 20:48:00]
-2025-11-12 21:48:44,018Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total=None, imp_calculated=None, imp_trend=None, direction=None, magnitude=None, actual=None, dependence=None; rows=0
-2025-11-12 21:48:44,020Z - INFO - No predictions to insert
-2025-11-12 21:49:16,225Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:49:17,140Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:49:17,186Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:49:17,204Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:49:48,686Z - ERROR - Unhandled exception in predict_V19F_to_db
+2025-11-13 11:56:11,246Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 11:56:12,386Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 11:56:12,440Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 11:56:12,467Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 11:56:45,044Z - ERROR - Unhandled exception in predict_V19F_to_db
 Traceback (most recent call last):
   File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
     self._check_compatible_with(other)
@@ -90,18 +20,19 @@ Traceback (most recent call last):
             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
     raise InvalidComparison(other) from err
-pandas.errors.InvalidComparison: 2025-11-12 17:19:00+00:00
+pandas.errors.InvalidComparison: 2025-11-13 07:26:00+00:00
 
 During handling of the above exception, another exception occurred:
 
 Traceback (most recent call last):
-  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 993, in <module>
-    main()
-  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 974, in main
-    news = _load_news(engine)
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 990, in <module>
+    _insert_predictions(engine, insert_df, has_updated)
+        ^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 961, in main
+    models, model_paths = _load_models()
            ^^^^^^^^^^^^^^^^^^
-  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 310, in _load_news
-    df = df[(df["timestamp_utc"] >= start_utc) & (df["timestamp_utc"] <= end_utc)].copy()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 297, in _load_news
+    now_utc = pd.Timestamp(datetime.utcnow()).floor("min")
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/common.py", line 76, in new_method
     return method(self, other)
@@ -127,62 +58,261 @@ Traceback (most recent call last):
   File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
     raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
 TypeError: Invalid comparison between dtype=datetime64[ns] and Timestamp
-2025-11-12 21:50:11,621Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
-2025-11-12 21:50:12,653Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
-2025-11-12 21:50:12,703Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
-2025-11-12 21:50:12,722Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
-2025-11-12 21:50:42,486Z - ERROR - Unhandled exception in predict_V19F_to_db
+2025-11-13 11:58:11,292Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 11:58:11,620Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 11:58:12,374Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 11:58:12,430Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 11:58:12,449Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 11:58:12,731Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 11:58:12,783Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 11:58:12,802Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 11:58:52,342Z - INFO - news window: raw=36, after_time=36, after_imp=36, time=[2025-11-13 07:28:00..2025-11-13 10:58:00]
+2025-11-13 11:58:52,342Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total_src=impact_score, rows=36
+2025-11-13 11:58:52,343Z - INFO - news window: raw=36, after_time=36, time=[2025-11-13 07:28:00..2025-11-13 10:58:00], df.min=2025-11-13 07:36:00, df.max=2025-11-13 09:44:00
+2025-11-13 11:58:52,936Z - ERROR - Unhandled exception in predict_V19F_to_db
 Traceback (most recent call last):
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 536, in _validate_comparison_value
-    self._check_compatible_with(other)
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimes.py", line 540, in _check_compatible_with
-    self._assert_tzawareness_compat(other)
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimes.py", line 782, in _assert_tzawareness_compat
-    raise TypeError(
-TypeError: Cannot compare tz-naive and tz-aware datetime-like objects.
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 1001, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 973, in main
+    preds = _prepare_predictions(
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 691, in _prepare_predictions
+    rf_probs = models["rf"].predict_proba(feature_df)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 946, in predict_proba
+    X = self._validate_X_predict(X)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 638, in _validate_X_predict
+    X = validate_data(
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2919, in validate_data
+    _check_feature_names(_estimator, X, reset=reset)
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2777, in _check_feature_names
+    raise ValueError(message)
+ValueError: The feature names should match those that were passed during fit.
+Feature names unseen at fit time:
+- corr_direction
+- imp_total
+- imp_total_category
+- observations
+- price_change
+- ...
+Feature names seen at fit time, yet now missing:
+- imp_year_vol
+- sent_finbert
+- sent_label_id
+- sent_neg
+- sent_pos
+- ...
 
-The above exception was the direct cause of the following exception:
-
+2025-11-13 11:58:56,841Z - INFO - news window: raw=36, after_time=36, after_imp=36, time=[2025-11-13 07:28:00..2025-11-13 10:58:00]
+2025-11-13 11:58:56,841Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total_src=impact_score, rows=36
+2025-11-13 11:58:56,842Z - INFO - news window: raw=36, after_time=36, time=[2025-11-13 07:28:00..2025-11-13 10:58:00], df.min=2025-11-13 07:36:00, df.max=2025-11-13 09:44:00
+2025-11-13 11:58:57,427Z - ERROR - Unhandled exception in predict_V19F_to_db
 Traceback (most recent call last):
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 983, in _cmp_method
-    other = self._validate_comparison_value(other)
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 539, in _validate_comparison_value
-    raise InvalidComparison(other) from err
-pandas.errors.InvalidComparison: 2025-11-12 17:20:00+00:00
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 1001, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 973, in main
+    preds = _prepare_predictions(
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 691, in _prepare_predictions
+    rf_probs = models["rf"].predict_proba(feature_df)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 946, in predict_proba
+    X = self._validate_X_predict(X)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 638, in _validate_X_predict
+    X = validate_data(
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2919, in validate_data
+    _check_feature_names(_estimator, X, reset=reset)
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2777, in _check_feature_names
+    raise ValueError(message)
+ValueError: The feature names should match those that were passed during fit.
+Feature names unseen at fit time:
+- corr_direction
+- imp_total
+- imp_total_category
+- observations
+- price_change
+- ...
+Feature names seen at fit time, yet now missing:
+- imp_year_vol
+- sent_finbert
+- sent_label_id
+- sent_neg
+- sent_pos
+- ...
 
-During handling of the above exception, another exception occurred:
-
+2025-11-13 12:00:12,227Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 12:00:13,495Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 12:00:13,578Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 12:00:13,622Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 12:01:50,351Z - INFO - news window: raw=37, after_time=37, after_imp=37, time=[2025-11-13 07:31:00..2025-11-13 11:01:00]
+2025-11-13 12:01:50,351Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total_src=impact_score, rows=37
+2025-11-13 12:01:50,351Z - INFO - news window: raw=37, after_time=37, time=[2025-11-13 07:31:00..2025-11-13 11:01:00], df.min=2025-11-13 07:36:00, df.max=2025-11-13 10:00:00
+2025-11-13 12:01:50,948Z - ERROR - Unhandled exception in predict_V19F_to_db
 Traceback (most recent call last):
-  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 993, in <module>
-    magnitude_pred = :magnitude_pred,
-    ^^^^^^
-  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 974, in main
-    :direction_pred,
-  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 310, in _load_news
-    )
-      
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/common.py", line 76, in new_method
-    return method(self, other)
-           ^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arraylike.py", line 60, in __ge__
-    return self._cmp_method(other, operator.ge)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/series.py", line 6119, in _cmp_method
-    res_values = ops.comparison_op(lvalues, rvalues, op)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/array_ops.py", line 330, in comparison_op
-    res_values = op(lvalues, rvalues)
-                 ^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/common.py", line 76, in new_method
-    return method(self, other)
-           ^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arraylike.py", line 60, in __ge__
-    return self._cmp_method(other, operator.ge)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/arrays/datetimelike.py", line 985, in _cmp_method
-    return invalid_comparison(self, other, op)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/local/lib64/python3.12/site-packages/pandas/core/ops/invalid.py", line 40, in invalid_comparison
-    raise TypeError(f"Invalid comparison between dtype={left.dtype} and {typ}")
-TypeError: Invalid comparison between dtype=datetime64[ns] and Timestamp
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 1001, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 973, in main
+    preds = _prepare_predictions(
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 691, in _prepare_predictions
+    rf_probs = models["rf"].predict_proba(feature_df)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 946, in predict_proba
+    X = self._validate_X_predict(X)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 638, in _validate_X_predict
+    X = validate_data(
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2919, in validate_data
+    _check_feature_names(_estimator, X, reset=reset)
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2777, in _check_feature_names
+    raise ValueError(message)
+ValueError: The feature names should match those that were passed during fit.
+Feature names unseen at fit time:
+- corr_direction
+- imp_total
+- imp_total_category
+- observations
+- price_change
+- ...
+Feature names seen at fit time, yet now missing:
+- imp_year_vol
+- sent_finbert
+- sent_label_id
+- sent_neg
+- sent_pos
+- ...
+
+2025-11-13 12:02:11,624Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 12:02:12,721Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 12:02:12,778Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 12:02:12,797Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 12:03:07,142Z - INFO - news window: raw=37, after_time=37, after_imp=37, time=[2025-11-13 07:33:00..2025-11-13 11:03:00]
+2025-11-13 12:03:07,142Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total_src=impact_score, rows=37
+2025-11-13 12:03:07,142Z - INFO - news window: raw=37, after_time=37, time=[2025-11-13 07:33:00..2025-11-13 11:03:00], df.min=2025-11-13 07:36:00, df.max=2025-11-13 10:00:00
+2025-11-13 12:03:07,816Z - ERROR - Unhandled exception in predict_V19F_to_db
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 1001, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 973, in main
+    preds = _prepare_predictions(
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 691, in _prepare_predictions
+    rf_probs = models["rf"].predict_proba(feature_df)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 946, in predict_proba
+    X = self._validate_X_predict(X)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 638, in _validate_X_predict
+    X = validate_data(
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2919, in validate_data
+    _check_feature_names(_estimator, X, reset=reset)
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2777, in _check_feature_names
+    raise ValueError(message)
+ValueError: The feature names should match those that were passed during fit.
+Feature names unseen at fit time:
+- corr_direction
+- imp_total
+- imp_total_category
+- observations
+- price_change
+- ...
+Feature names seen at fit time, yet now missing:
+- imp_year_vol
+- sent_finbert
+- sent_label_id
+- sent_neg
+- sent_pos
+- ...
+
+2025-11-13 12:04:11,693Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 12:04:12,648Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 12:04:12,696Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 12:04:12,712Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 12:04:52,670Z - INFO - news window: raw=36, after_time=36, after_imp=36, time=[2025-11-13 07:34:00..2025-11-13 11:04:00]
+2025-11-13 12:04:52,671Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total_src=impact_score, rows=36
+2025-11-13 12:04:52,671Z - INFO - news window: raw=36, after_time=36, time=[2025-11-13 07:34:00..2025-11-13 11:04:00], df.min=2025-11-13 07:36:00, df.max=2025-11-13 09:59:00
+2025-11-13 12:04:53,308Z - ERROR - Unhandled exception in predict_V19F_to_db
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 1001, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 973, in main
+    preds = _prepare_predictions(
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 691, in _prepare_predictions
+    rf_probs = models["rf"].predict_proba(feature_df)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 946, in predict_proba
+    X = self._validate_X_predict(X)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 638, in _validate_X_predict
+    X = validate_data(
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2919, in validate_data
+    _check_feature_names(_estimator, X, reset=reset)
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2777, in _check_feature_names
+    raise ValueError(message)
+ValueError: The feature names should match those that were passed during fit.
+Feature names unseen at fit time:
+- corr_direction
+- imp_total
+- imp_total_category
+- observations
+- price_change
+- ...
+Feature names seen at fit time, yet now missing:
+- imp_year_vol
+- sent_finbert
+- sent_label_id
+- sent_neg
+- sent_pos
+- ...
+
+2025-11-13 12:06:11,927Z - INFO - Loading rf model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_rf_15m.pkl
+2025-11-13 12:06:13,284Z - INFO - Loading xgb model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_direction_xgb_15m.pkl
+2025-11-13 12:06:13,408Z - INFO - Loading reg model from /home/ilyamus/GPTGROKWORK/AITrainer_V5/model_te_magnitude_xgb_15m.pkl
+2025-11-13 12:06:13,445Z - INFO - Loading event label encoder from /home/ilyamus/GPTGROKWORK/AITrainer_V5/label_encoder_event_te_15m.pkl
+2025-11-13 12:06:57,680Z - INFO - news window: raw=34, after_time=34, after_imp=34, time=[2025-11-13 07:36:00..2025-11-13 11:06:00]
+2025-11-13 12:06:57,680Z - INFO - news_tradingeconomics mapping: event=headline, event_key=None, imp_total_src=impact_score, rows=34
+2025-11-13 12:06:57,681Z - INFO - news window: raw=34, after_time=34, time=[2025-11-13 07:36:00..2025-11-13 11:06:00], df.min=2025-11-13 07:39:00, df.max=2025-11-13 09:59:00
+2025-11-13 12:06:58,243Z - ERROR - Unhandled exception in predict_V19F_to_db
+Traceback (most recent call last):
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 1001, in <module>
+    main()
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 973, in main
+    preds = _prepare_predictions(
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ilyamus/GPTGROKWORK/AITrainer_V5/predict_V19F_to_db.py", line 691, in _prepare_predictions
+    rf_probs = models["rf"].predict_proba(feature_df)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 946, in predict_proba
+    X = self._validate_X_predict(X)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/ensemble/_forest.py", line 638, in _validate_X_predict
+    X = validate_data(
+        ^^^^^^^^^^^^^^
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2919, in validate_data
+    _check_feature_names(_estimator, X, reset=reset)
+  File "/usr/local/lib64/python3.12/site-packages/sklearn/utils/validation.py", line 2777, in _check_feature_names
+    raise ValueError(message)
+ValueError: The feature names should match those that were passed during fit.
+Feature names unseen at fit time:
+- corr_direction
+- imp_total
+- imp_total_category
+- observations
+- price_change
+- ...
+Feature names seen at fit time, yet now missing:
+- imp_year_vol
+- sent_finbert
+- sent_label_id
+- sent_neg
+- sent_pos
+- ...
+
