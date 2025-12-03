@@ -17,7 +17,7 @@ from sqlalchemy import inspect, text
 FUTURE_MODE = True
 FUTURE_HOURS = 1
 START_DATE = "2024-01-01"
-FUTURE_PAST_MINUTES = 151 # брать ещё последние 10 минут
+FUTURE_PAST_MINUTES = 15 # брать ещё последние 10 минут
 
 DB_CONN = "mysql+mysqlconnector://GPTFOREX:GPtushechkaForexUshechka@localhost/GPTFOREX" 
 
