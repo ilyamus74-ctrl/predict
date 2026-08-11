@@ -6,9 +6,12 @@ import sys
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else "RTranslator")
 translator = ROOT / "app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java"
 global_java = ROOT / "app/src/main/java/nie/translator/rtranslator/Global.java"
+manifest = ROOT / "app/src/main/AndroidManifest.xml"
+user_data = ROOT / "app/src/main/java/nie/translator/rtranslator/access/UserDataFragment.java"
+settings_fragment = ROOT / "app/src/main/java/nie/translator/rtranslator/settings/SettingsFragment.java"
 build_gradle = ROOT / "app/build.gradle"
 
-for path in (translator, global_java, build_gradle):
+for path in (translator, global_java, manifest, user_data, settings_fragment, build_gradle):
     if not path.exists():
         raise SystemExit(f"Required RTranslator file not found: {path}")
 
@@ -43,10 +46,21 @@ if count < 2:
 g = g.replace(needle, 'sharedPreferences.getInt("selectedTranslationModel", Translator.MADLAD_CACHE)')
 global_java.write_text(g, encoding="utf-8")
 
+# Give the Lite package its own FileProvider authority. The original authority is
+# hard-coded in the manifest and in two GalleryImageSelector call sites, so all
+# three must change for stock RTranslator and Lite to coexist.
+old_authority = 'com.gallery.RTranslator.2.0.provider'
+new_authority = 'com.gallery.RTranslator.lite.provider'
+for path in (manifest, user_data, settings_fragment):
+    value = path.read_text(encoding="utf-8")
+    if old_authority not in value:
+        raise SystemExit(f"Expected FileProvider authority not found in {path}")
+    path.write_text(value.replace(old_authority, new_authority), encoding="utf-8")
+
 bg = build_gradle.read_text(encoding="utf-8")
 bg = bg.replace('applicationId "nie.translator.rtranslator"', 'applicationId "nie.translator.rtranslator.lite"', 1)
-bg = re.sub(r'versionCode\s+\d+', 'versionCode 30004', bg, count=1)
-bg = re.sub(r"versionName\s+'[^']+'", "versionName '3.0.0-alpha3-lite2'", bg, count=1)
+bg = re.sub(r'versionCode\s+\d+', 'versionCode 30005', bg, count=1)
+bg = re.sub(r"versionName\s+'[^']+'", "versionName '3.0.0-alpha3-lite3'", bg, count=1)
 build_gradle.write_text(bg, encoding="utf-8")
 
 print("Patched:")
@@ -54,5 +68,5 @@ print(" - official MADLAD INT4 path Int4Acc4 first")
 print(" - legacy Int4_16 and Int8WO compatibility fallbacks")
 print(" - MADLAD_CACHE is the first-run/default translation backend")
 print(" - ORT arenas disabled for MADLAD low-memory mode")
-print(" - side-by-side applicationId nie.translator.rtranslator.lite")
-print(" - version 3.0.0-alpha3-lite2")
+print(" - side-by-side applicationId and unique FileProvider authority")
+print(" - version 3.0.0-alpha3-lite3")
