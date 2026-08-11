@@ -52,15 +52,34 @@ jobs:
             --shallow-submodules \
             https://github.com/niedev/RTranslator.git RTranslator
 
-      - name: Apply Lite4 patch
+      - name: Apply Lite5 patches
         shell: bash
         run: |
           python3 rtranslator-lite/patch_low_memory.py RTranslator
+          python3 rtranslator-lite/patch_lite5_identity.py RTranslator
+
+          echo '--- translation backend ---'
           grep -n 'Int4Acc4\|RTranslatorLite\|boolean arena' \
             RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java
-          grep -n 'Whisper_cache_initializer\|NLLB_' \
-            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java | head -20
+
+          echo '--- onboarding URLs: must be Whisper only ---'
+          grep -n 'releases/download/2.0.0/' \
+            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java
+          if grep -q 'releases/download/2.0.0/NLLB_' \
+            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java; then
+            echo 'ERROR: NLLB download URL survived Lite5 patch'
+            exit 1
+          fi
+
+          echo '--- visible Lite5 marker ---'
+          grep -n 'LITE5 | Whisper only' \
+            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java
+
+          echo '--- package/version ---'
           grep -n 'applicationId\|versionCode\|versionName' RTranslator/app/build.gradle | head
+
+          echo '--- app labels ---'
+          grep -R '<string name="app_name"' RTranslator/app/src/main/res/values* | head -20
 
       - name: Configure Android SDK path
         shell: bash
@@ -79,13 +98,13 @@ jobs:
         run: |
           mkdir -p out
           cp RTranslator/app/build/outputs/apk/debug/app-debug.apk \
-             out/RTranslator-3.0.0-alpha3-lite4-debug.apk
-          sha256sum out/RTranslator-3.0.0-alpha3-lite4-debug.apk | tee out/SHA256SUMS.txt
+             out/RTranslator-3.0.0-alpha3-lite5-debug.apk
+          sha256sum out/RTranslator-3.0.0-alpha3-lite5-debug.apk | tee out/SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-3.0.0-alpha3-lite4
+          name: RTranslator-3.0.0-alpha3-lite5
           path: out/*
           if-no-files-found: error
           retention-days: 14
