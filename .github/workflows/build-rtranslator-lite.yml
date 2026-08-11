@@ -13,35 +13,6 @@ permissions:
   contents: read
 
 jobs:
-  inspect-madlad:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Download official Madlad.zip
-        shell: bash
-        run: |
-          curl -fL --retry 3 --retry-delay 2 \
-            -o Madlad.zip \
-            https://github.com/niedev/OnnxModelsEnhancer/releases/download/v1.0.0-beta/Madlad.zip
-          ls -lh Madlad.zip
-          sha256sum Madlad.zip
-
-      - name: List model files
-        shell: bash
-        run: |
-          unzip -l Madlad.zip | tee madlad-files.txt
-          echo '--- INT4 entries ---'
-          grep -Ei 'int4|4bit' madlad-files.txt || true
-          echo '--- INT8 entries ---'
-          grep -Ei 'int8|8bit' madlad-files.txt || true
-
-      - name: Upload model listing
-        uses: actions/upload-artifact@v4
-        with:
-          name: madlad-package-listing
-          path: madlad-files.txt
-          retention-days: 2
-
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -57,6 +28,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Install stable Lite debug signing key
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.android"
+          base64 -d rtranslator-lite/debug.keystore.b64 > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey >/dev/null
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -81,12 +60,14 @@ jobs:
             --shallow-submodules \
             https://github.com/niedev/RTranslator.git RTranslator
 
-      - name: Apply low-memory patch
+      - name: Apply Lite4 patch
         shell: bash
         run: |
           python3 rtranslator-lite/patch_low_memory.py RTranslator
-          grep -n 'RTranslatorLite\|Int4_16\|boolean arena' \
+          grep -n 'Int4Acc4\|RTranslatorLite\|boolean arena' \
             RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java
+          grep -n 'Whisper_cache_initializer\|NLLB_' \
+            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java | head -20
           grep -n 'applicationId\|versionCode\|versionName' RTranslator/app/build.gradle | head
 
       - name: Configure Android SDK path
@@ -106,13 +87,13 @@ jobs:
         run: |
           mkdir -p out
           cp RTranslator/app/build/outputs/apk/debug/app-debug.apk \
-             out/RTranslator-3.0.0-alpha3-lite-debug.apk
-          sha256sum out/RTranslator-3.0.0-alpha3-lite-debug.apk | tee out/SHA256SUMS.txt
+             out/RTranslator-3.0.0-alpha3-lite4-debug.apk
+          sha256sum out/RTranslator-3.0.0-alpha3-lite4-debug.apk | tee out/SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-3.0.0-alpha3-lite
+          name: RTranslator-3.0.0-alpha3-lite4
           path: out/*
           if-no-files-found: error
           retention-days: 14
