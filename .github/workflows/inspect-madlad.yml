@@ -1,0 +1,42 @@
+name: Inspect RTranslator MADLAD package
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/inspect-madlad.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download official Madlad.zip
+        shell: bash
+        run: |
+          curl -fL --retry 3 --retry-delay 2 \
+            -o Madlad.zip \
+            https://github.com/niedev/OnnxModelsEnhancer/releases/download/v1.0.0-beta/Madlad.zip
+          ls -lh Madlad.zip
+          sha256sum Madlad.zip
+
+      - name: List model files
+        shell: bash
+        run: |
+          unzip -l Madlad.zip | tee madlad-files.txt
+          echo '--- INT4 entries ---'
+          grep -Ei 'int4|4bit' madlad-files.txt || true
+          echo '--- INT8 entries ---'
+          grep -Ei 'int8|8bit' madlad-files.txt || true
+
+      - name: Upload file listing
+        uses: actions/upload-artifact@v4
+        with:
+          name: madlad-package-listing
+          path: madlad-files.txt
+          retention-days: 2
