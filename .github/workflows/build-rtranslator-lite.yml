@@ -29,14 +29,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install stable Lite debug signing key
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.android"
-          base64 -d rtranslator-lite/debug.keystore.b64 > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey >/dev/null
-
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
