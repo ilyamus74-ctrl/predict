@@ -111,12 +111,33 @@ jobs:
           LIB=examples/llama.android/lib
           GRADLE="$LIB/build.gradle.kts"
           CPP="$LIB/src/main/cpp/ai_chat.cpp"
+          LOGGING="$LIB/src/main/cpp/logging.h"
 
           # Match the app's NDK/minSdk and package arm64 only.
           sed -i 's/ndkVersion = "29.0.13113456"/ndkVersion = "28.0.12674087"/' "$GRADLE"
           sed -i 's/minSdk = 33/minSdk = 28/' "$GRADLE"
           sed -i 's/abiFilters += listOf("arm64-v8a", "x86_64")/abiFilters += listOf("arm64-v8a")/' "$GRADLE"
           sed -i 's/-DGGML_CPU_ALL_VARIANTS=ON/-DGGML_CPU_ALL_VARIANTS=OFF/' "$GRADLE"
+
+          # __android_log_is_loggable() is API 30+. Keep Lite10 compatible with minSdk 28.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('examples/llama.android/lib/src/main/cpp/logging.h')
+          s=p.read_text()
+          old='''static inline int ai_should_log(int prio) {
+              return __android_log_is_loggable(prio, LOG_TAG, LOG_MIN_LEVEL);
+          }'''
+          new='''static inline int ai_should_log(int prio) {
+          #if __ANDROID_API__ >= 30
+              return __android_log_is_loggable(prio, LOG_TAG, LOG_MIN_LEVEL);
+          #else
+              return prio >= LOG_MIN_LEVEL;
+          #endif
+          }'''
+          if old not in s:
+              raise SystemExit('ai_should_log implementation not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
 
           # Translation profile: smaller KV cache and deterministic generation.
           sed -i 's/DEFAULT_CONTEXT_SIZE    = 8192/DEFAULT_CONTEXT_SIZE    = 2048/' "$CPP"
@@ -191,6 +212,7 @@ jobs:
           grep -n 'minSdk = 28' "$GRADLE"
           grep -n 'abiFilters += listOf("arm64-v8a")' "$GRADLE"
           grep -n 'GGML_CPU_ALL_VARIANTS=OFF' "$GRADLE"
+          grep -n '__ANDROID_API__ >= 30' "$LOGGING"
 
           cd examples/llama.android
           chmod +x gradlew
