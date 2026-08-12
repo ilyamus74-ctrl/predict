@@ -1,0 +1,71 @@
+name: Split RTranslator Lite10 APK artifact
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/split-rtranslator-lite10-artifact.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download successful Lite10 artifact from run 31574678752
+        uses: actions/download-artifact@v4
+        with:
+          name: RTranslator-3.0.0-alpha3-lite10-llama
+          path: lite10
+          repository: ilyamus74-ctrl/predict
+          run-id: 31574678752
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify and split APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=lite10/RTranslator-3.0.0-alpha3-lite10-llama-debug.apk
+          test -f "$APK"
+          sha256sum "$APK" | tee lite10/APK-SHA256.txt
+          split -b 200M -d -a 2 "$APK" lite10/RTranslator-lite10.apk.part-
+          test -f lite10/RTranslator-lite10.apk.part-00
+          test -f lite10/RTranslator-lite10.apk.part-01
+          test -f lite10/RTranslator-lite10.apk.part-02
+          ls -lh lite10/RTranslator-lite10.apk.part-* lite10/APK-SHA256.txt
+
+      - name: Upload APK part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-apk-part-00
+          path: lite10/RTranslator-lite10.apk.part-00
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload APK part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-apk-part-01
+          path: lite10/RTranslator-lite10.apk.part-01
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload APK part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-apk-part-02
+          path: lite10/RTranslator-lite10.apk.part-02
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload APK checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-apk-sha256
+          path: lite10/APK-SHA256.txt
+          retention-days: 14
