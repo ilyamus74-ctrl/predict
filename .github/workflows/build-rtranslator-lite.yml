@@ -66,8 +66,6 @@ jobs:
           rm -rf sherpa-aar
           mkdir sherpa-aar
           unzip -q sherpa.aar -d sherpa-aar
-
-          # Keep sherpa's newer ORT core. Only remove ABIs that cannot execute our bundled ASR.
           find sherpa-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
           test -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
           test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so
@@ -89,9 +87,6 @@ jobs:
           find ort-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
           test -f ort-aar/jni/arm64-v8a/libonnxruntime.so
           test -f ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
-
-          # The Java/JNI wrapper may be older than sherpa's ORT core; keep the wrapper,
-          # remove only the 1.24.3 core so the process loads exactly one libonnxruntime.so.
           rm -f ort-aar/jni/arm64-v8a/libonnxruntime.so
           test ! -f ort-aar/jni/arm64-v8a/libonnxruntime.so
           test -f ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
@@ -190,49 +185,122 @@ jobs:
       - name: Verify built Lite8 APK
         shell: bash
         run: |
-          set -euxo pipefail
+          set -uo pipefail
           APK=RTranslator/app/build/outputs/apk/debug/app-debug.apk
-          rm -rf apkcheck apk-strings.txt apk-badging.txt
+          rm -rf apkcheck verify
+          mkdir -p verify
           unzip -q "$APK" -d apkcheck
-          strings apkcheck/classes*.dex > apk-strings.txt
+          unzip -l "$APK" > verify/apk-contents.txt
+          strings apkcheck/classes*.dex > verify/apk-strings.txt
 
-          echo '--- Java/Dex sherpa markers ---'
-          grep -q 'RTranslatorLite8' apk-strings.txt
-          grep -q 'small-encoder.int8.onnx' apk-strings.txt
-          grep -q 'small-decoder.int8.onnx' apk-strings.txt
-          grep -q 'silero_vad.int8.onnx' apk-strings.txt
+          FAIL=0
+          check_file() {
+            if test -f "$1"; then
+              echo "PASS file: $1" | tee -a verify/results.txt
+            else
+              echo "FAIL file: $1" | tee -a verify/results.txt
+              FAIL=1
+            fi
+          }
+          check_marker() {
+            if grep -Fq "$1" verify/apk-strings.txt; then
+              echo "PASS marker: $1" | tee -a verify/results.txt
+            else
+              echo "FAIL marker: $1" | tee -a verify/results.txt
+              FAIL=1
+            fi
+          }
+          check_size() {
+            local file="$1"
+            local expected="$2"
+            if test -f "$file" && test "$(stat -c%s "$file")" -eq "$expected"; then
+              echo "PASS size: $file = $expected" | tee -a verify/results.txt
+            else
+              local actual='missing'
+              test -f "$file" && actual="$(stat -c%s "$file")"
+              echo "FAIL size: $file expected=$expected actual=$actual" | tee -a verify/results.txt
+              FAIL=1
+            fi
+          }
 
-          echo '--- bundled models ---'
-          test -f apkcheck/assets/sherpa/small-encoder.int8.onnx
-          test -f apkcheck/assets/sherpa/small-decoder.int8.onnx
-          test -f apkcheck/assets/sherpa/small-tokens.txt
-          test -f apkcheck/assets/sherpa/silero_vad.int8.onnx
-          test "$(stat -c%s apkcheck/assets/sherpa/small-encoder.int8.onnx)" -eq 112442483
-          test "$(stat -c%s apkcheck/assets/sherpa/small-decoder.int8.onnx)" -eq 262226114
+          echo '=== APK top-level assets ===' | tee verify/assets.txt
+          find apkcheck/assets/sherpa -maxdepth 1 -type f -printf '%p %s bytes\n' 2>/dev/null | sort | tee -a verify/assets.txt || true
 
-          echo '--- native libraries: one ORT core + Java JNI + sherpa JNI ---'
-          test -f apkcheck/lib/arm64-v8a/libonnxruntime.so
-          test -f apkcheck/lib/arm64-v8a/libonnxruntime4j_jni.so
-          test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-jni.so
-          test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-c-api.so
-          ORT_COUNT=$(find apkcheck/lib -type f -name 'libonnxruntime.so' | wc -l)
-          ORT_JNI_COUNT=$(find apkcheck/lib -type f -name 'libonnxruntime4j_jni.so' | wc -l)
-          echo "libonnxruntime.so count: $ORT_COUNT"
-          echo "libonnxruntime4j_jni.so count: $ORT_JNI_COUNT"
-          test "$ORT_COUNT" -eq 1
-          test "$ORT_JNI_COUNT" -eq 1
+          echo '=== APK native libraries ===' | tee verify/native-libs.txt
+          find apkcheck/lib -type f -printf '%p %s bytes\n' 2>/dev/null | sort | tee -a verify/native-libs.txt || true
 
-          # Prove the packaged core is byte-for-byte the ORT core shipped by sherpa 1.13.5.
-          printf '%s  apkcheck/lib/arm64-v8a/libonnxruntime.so\n' "$(cat sherpa-core.sha256)" | sha256sum -c -
-          find apkcheck/lib/arm64-v8a -maxdepth 1 -type f -printf '%f %s bytes\n' | sort | grep -E 'onnx|sherpa|ucd|kaldi'
+          echo '=== DEX markers ==='
+          check_marker 'RTranslatorLite8'
+          check_marker 'small-encoder.int8.onnx'
+          check_marker 'small-decoder.int8.onnx'
+          check_marker 'silero_vad.int8.onnx'
 
-          echo '--- manifest metadata ---'
+          echo '=== bundled ASR assets ==='
+          check_file apkcheck/assets/sherpa/small-encoder.int8.onnx
+          check_file apkcheck/assets/sherpa/small-decoder.int8.onnx
+          check_file apkcheck/assets/sherpa/small-tokens.txt
+          check_file apkcheck/assets/sherpa/silero_vad.int8.onnx
+          check_size apkcheck/assets/sherpa/small-encoder.int8.onnx 112442483
+          check_size apkcheck/assets/sherpa/small-decoder.int8.onnx 262226114
+          check_size apkcheck/assets/sherpa/small-tokens.txt 816730
+          check_size apkcheck/assets/sherpa/silero_vad.int8.onnx 212860
+
+          echo '=== native libraries ==='
+          check_file apkcheck/lib/arm64-v8a/libonnxruntime.so
+          check_file apkcheck/lib/arm64-v8a/libonnxruntime4j_jni.so
+          check_file apkcheck/lib/arm64-v8a/libsherpa-onnx-jni.so
+          check_file apkcheck/lib/arm64-v8a/libsherpa-onnx-c-api.so
+
+          ORT_COUNT=$(find apkcheck/lib -type f -name 'libonnxruntime.so' 2>/dev/null | wc -l)
+          ORT_JNI_COUNT=$(find apkcheck/lib -type f -name 'libonnxruntime4j_jni.so' 2>/dev/null | wc -l)
+          echo "ORT_COUNT=$ORT_COUNT" | tee -a verify/results.txt
+          echo "ORT_JNI_COUNT=$ORT_JNI_COUNT" | tee -a verify/results.txt
+          test "$ORT_COUNT" -eq 1 || FAIL=1
+          test "$ORT_JNI_COUNT" -eq 1 || FAIL=1
+
+          if test -f apkcheck/lib/arm64-v8a/libonnxruntime.so; then
+            EXPECTED_CORE=$(cat sherpa-core.sha256)
+            ACTUAL_CORE=$(sha256sum apkcheck/lib/arm64-v8a/libonnxruntime.so | awk '{print $1}')
+            echo "ORT core expected=$EXPECTED_CORE" | tee -a verify/results.txt
+            echo "ORT core actual=$ACTUAL_CORE" | tee -a verify/results.txt
+            if test "$EXPECTED_CORE" = "$ACTUAL_CORE"; then
+              echo 'PASS ORT core is byte-for-byte sherpa 1.13.5 core' | tee -a verify/results.txt
+            else
+              echo 'FAIL ORT core hash mismatch' | tee -a verify/results.txt
+              FAIL=1
+            fi
+          fi
+
+          echo '=== manifest metadata ==='
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
-          "$AAPT" dump badging "$APK" | tee apk-badging.txt
-          grep -q "package: name='nie.translator.rtranslator.lite8'" apk-badging.txt
-          grep -q "application-label:'RTranslator Lite8'" apk-badging.txt
+          "$AAPT" dump badging "$APK" | tee verify/apk-badging.txt
+          if grep -Fq "package: name='nie.translator.rtranslator.lite8'" verify/apk-badging.txt; then
+            echo 'PASS package id' | tee -a verify/results.txt
+          else
+            echo 'FAIL package id' | tee -a verify/results.txt
+            FAIL=1
+          fi
+          if grep -Fq "application-label:'RTranslator Lite8'" verify/apk-badging.txt; then
+            echo 'PASS application label' | tee -a verify/results.txt
+          else
+            echo 'FAIL application label' | tee -a verify/results.txt
+            FAIL=1
+          fi
 
-          echo 'Lite8 APK verified: INT8 sherpa ASR assets, JNI bridge and single ORT 1.27.1 core are present.'
+          cp "$APK" verify/app-debug.apk
+          sha256sum "$APK" | tee verify/apk.sha256
+          echo "FINAL_VERIFY_FAIL=$FAIL" | tee -a verify/results.txt
+          exit "$FAIL"
+
+      - name: Upload verifier diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite8-verifier-diagnostics
+          path: verify/*
+          if-no-files-found: warn
+          retention-days: 2
+          compression-level: 0
 
       - name: Collect APK
         shell: bash
