@@ -1,0 +1,101 @@
+name: Split RTranslator Lite11 APK artifact
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/split-rtranslator-lite11-artifact.yml'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download successful Lite11 artifact from run 31582620248
+        uses: actions/download-artifact@v4
+        with:
+          name: RTranslator-3.0.0-alpha3-lite11-ocr-documents
+          path: lite11
+          repository: ilyamus74-ctrl/predict
+          run-id: 31582620248
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify APK and create Drive delivery volumes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=lite11/RTranslator-3.0.0-alpha3-lite11-ocr-documents-debug.apk
+          test -f "$APK"
+          if [ -f lite11/APK-SHA256.txt ]; then cat lite11/APK-SHA256.txt; else sha256sum "$APK" | tee lite11/APK-SHA256.txt; fi
+
+          zip -9 -j lite11/RTranslator-lite11-ready.zip "$APK" lite11/APK-SHA256.txt
+          sha256sum lite11/RTranslator-lite11-ready.zip | tee lite11/RTranslator-lite11-ready.zip.sha256
+          split -b 75M -d -a 2 lite11/RTranslator-lite11-ready.zip lite11/RTranslator-lite11-ready.zip.part-
+
+          PARTS=$(find lite11 -maxdepth 1 -name 'RTranslator-lite11-ready.zip.part-*' | wc -l)
+          test "$PARTS" -eq 4
+
+          cat > lite11/README-REASSEMBLE.txt <<'EOF'
+          RTranslator Lite11 Documents OCR delivery package
+
+          Unzip all four Drive volume ZIP files first. Then join the resulting .part files in numeric order.
+
+          Windows CMD:
+          copy /b RTranslator-lite11-ready.zip.part-00+RTranslator-lite11-ready.zip.part-01+RTranslator-lite11-ready.zip.part-02+RTranslator-lite11-ready.zip.part-03 RTranslator-lite11-ready.zip
+
+          PowerShell:
+          cmd /c 'copy /b RTranslator-lite11-ready.zip.part-00+RTranslator-lite11-ready.zip.part-01+RTranslator-lite11-ready.zip.part-02+RTranslator-lite11-ready.zip.part-03 RTranslator-lite11-ready.zip'
+
+          Linux/macOS:
+          cat RTranslator-lite11-ready.zip.part-00 RTranslator-lite11-ready.zip.part-01 RTranslator-lite11-ready.zip.part-02 RTranslator-lite11-ready.zip.part-03 > RTranslator-lite11-ready.zip
+
+          Then extract RTranslator-lite11-ready.zip. It contains the installable APK and APK-SHA256.txt.
+          EOF
+
+      - name: Upload Drive volume 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite11-drive-volume-00
+          path: lite11/RTranslator-lite11-ready.zip.part-00
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive volume 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite11-drive-volume-01
+          path: lite11/RTranslator-lite11-ready.zip.part-01
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive volume 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite11-drive-volume-02
+          path: lite11/RTranslator-lite11-ready.zip.part-02
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive volume 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite11-drive-volume-03
+          path: lite11/RTranslator-lite11-ready.zip.part-03
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite11-drive-manifest
+          path: |
+            lite11/APK-SHA256.txt
+            lite11/RTranslator-lite11-ready.zip.sha256
+            lite11/README-REASSEMBLE.txt
+          retention-days: 14
