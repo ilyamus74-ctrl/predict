@@ -1,0 +1,53 @@
+name: Inspect sherpa-onnx Android AAR
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/inspect-sherpa-aar.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download sherpa-onnx 1.13.5 AAR
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 \
+            -o sherpa-onnx-1.13.5.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar
+          sha256sum sherpa-onnx-1.13.5.aar
+          ls -lh sherpa-onnx-1.13.5.aar
+
+      - name: Inspect AAR layout and native libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf sherpa-aar
+          mkdir sherpa-aar
+          unzip -q sherpa-onnx-1.13.5.aar -d sherpa-aar
+          echo '=== ALL NATIVE LIBRARIES ==='
+          find sherpa-aar -type f -path '*/jni/*' -printf '%p %s bytes\n' | sort
+          echo '=== ONNX / SHERPA / C++ LIBRARIES ==='
+          find sherpa-aar -type f \( -iname '*onnx*' -o -iname '*sherpa*' -o -iname '*c++*' \) -printf '%p %s bytes\n' | sort
+          echo '=== TOP LEVEL ==='
+          find sherpa-aar -maxdepth 2 -type f -printf '%p %s bytes\n' | sort | head -200
+
+      - name: Inspect Java/Kotlin API classes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          jar tf sherpa-aar/classes.jar | grep -E 'OfflineRecognizer|OfflineWhisper|Vad|VoiceActivity|FeatureConfig' | head -200 || true
+
+      - name: Explicit collision summary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo 'Native basenames that can collide with RTranslator dependencies:'
+          find sherpa-aar -type f -path '*/jni/*' -printf '%f\n' | sort -u | grep -E 'onnxruntime|onnxruntime_extensions|c\+\+_shared|sherpa' || true
