@@ -52,12 +52,13 @@ jobs:
             --shallow-submodules \
             https://github.com/niedev/RTranslator.git RTranslator
 
-      - name: Prepare sherpa-onnx AAR and INT8 ASR assets
+      - name: Prepare ORT bridge, sherpa AAR and INT8 ASR assets
         shell: bash
         run: |
           set -euxo pipefail
+          mkdir -p RTranslator/app/libs
 
-          echo '=== sherpa-onnx Android AAR 1.13.5 ==='
+          echo '=== sherpa-onnx Android AAR 1.13.5 / ORT core 1.27.1 ==='
           curl -fL --retry 3 -o sherpa.aar \
             https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar
           echo '6419cd8bc983e0c4fab06067f0fe0313fdc0f7103818ac1e7a08d50787b7a82b  sherpa.aar' | sha256sum -c -
@@ -66,15 +67,39 @@ jobs:
           mkdir sherpa-aar
           unzip -q sherpa.aar -d sherpa-aar
 
-          # RTranslator supplies the single process-wide ORT 1.27.1 via Gradle.
-          # Keep sherpa JNI/C API, remove sherpa's duplicate ORT and all non-arm64 ABIs.
+          # Keep sherpa's newer ORT core. Only remove ABIs that cannot execute our bundled ASR.
           find sherpa-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
-          rm -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
           test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so
-          test ! -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-c-api.so
+          sha256sum sherpa-aar/jni/arm64-v8a/libonnxruntime.so
+          sha256sum sherpa-aar/jni/arm64-v8a/libonnxruntime.so | awk '{print $1}' > sherpa-core.sha256
+          (cd sherpa-aar && zip -qr ../RTranslator/app/libs/sherpa-onnx-1.13.5-core-arm64.aar .)
 
-          mkdir -p RTranslator/app/libs
-          (cd sherpa-aar && zip -qr ../RTranslator/app/libs/sherpa-onnx-1.13.5-no-ort-arm64.aar .)
+          echo '=== ONNX Runtime Android 1.24.3 Java/JNI bridge ==='
+          ORT_URL=https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.24.3/onnxruntime-android-1.24.3.aar
+          curl -fL --retry 3 -o ort.aar "$ORT_URL"
+          curl -fsSL --retry 3 -o ort.aar.sha1 "$ORT_URL.sha1"
+          printf '%s  ort.aar\n' "$(tr -d '[:space:]' < ort.aar.sha1)" | sha1sum -c -
+
+          rm -rf ort-aar
+          mkdir ort-aar
+          unzip -q ort.aar -d ort-aar
+          test -f ort-aar/classes.jar
+          find ort-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+
+          # The Java/JNI wrapper may be older than sherpa's ORT core; keep the wrapper,
+          # remove only the 1.24.3 core so the process loads exactly one libonnxruntime.so.
+          rm -f ort-aar/jni/arm64-v8a/libonnxruntime.so
+          test ! -f ort-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+          echo '--- ORT Java JNI dynamic dependencies ---'
+          readelf -d ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so | grep NEEDED || true
+          echo '--- sherpa JNI dynamic dependencies ---'
+          readelf -d sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so | grep NEEDED || true
+          (cd ort-aar && zip -qr ../RTranslator/app/libs/onnxruntime-android-1.24.3-no-core-arm64.aar .)
 
           echo '=== official multilingual Whisper Small ==='
           curl -fL --retry 3 -o whisper-small.tar.bz2 \
@@ -112,6 +137,7 @@ jobs:
           python3 rtranslator-lite/patch_lite6_real_downloader.py RTranslator
           python3 rtranslator-lite/patch_lite7_walkie_safety.py RTranslator
           python3 rtranslator-lite/patch_lite8_sherpa_asr.py RTranslator
+          python3 rtranslator-lite/patch_lite8_ort_bridge.py RTranslator
 
           echo '--- MADLAD translation backend stays active ---'
           grep -n 'Int4Acc4\|RTranslatorLite\|boolean arena' \
@@ -139,9 +165,10 @@ jobs:
           grep -n 'startForegroundService(intent)' "$VTA"
           grep -n 'RTranslatorLite8' "$VTA"
 
-          echo '--- ORT / AAR / package ---'
-          grep -n 'onnxruntime-android:1.27.1' RTranslator/app/build.gradle
-          grep -n 'sherpa-onnx-1.13.5-no-ort-arm64.aar' RTranslator/app/build.gradle
+          echo '--- ORT bridge / AAR / package ---'
+          ! grep -q 'onnxruntime-android:1.27.1' RTranslator/app/build.gradle
+          grep -n 'onnxruntime-android-1.24.3-no-core-arm64.aar' RTranslator/app/build.gradle
+          grep -n 'sherpa-onnx-1.13.5-core-arm64.aar' RTranslator/app/build.gradle
           grep -n 'kotlin-stdlib:1.7.20' RTranslator/app/build.gradle
           grep -n "noCompress 'onnx', 'txt'" RTranslator/app/build.gradle
           grep -q 'applicationId "nie.translator.rtranslator.lite8"' RTranslator/app/build.gradle
@@ -174,7 +201,6 @@ jobs:
           grep -q 'small-encoder.int8.onnx' apk-strings.txt
           grep -q 'small-decoder.int8.onnx' apk-strings.txt
           grep -q 'silero_vad.int8.onnx' apk-strings.txt
-          grep -q 'com/k2fsa/sherpa/onnx/OfflineRecognizer' <(find apkcheck -type f -name 'classes*.dex' -exec strings {} +) || true
 
           echo '--- bundled models ---'
           test -f apkcheck/assets/sherpa/small-encoder.int8.onnx
@@ -184,12 +210,20 @@ jobs:
           test "$(stat -c%s apkcheck/assets/sherpa/small-encoder.int8.onnx)" -eq 112442483
           test "$(stat -c%s apkcheck/assets/sherpa/small-decoder.int8.onnx)" -eq 262226114
 
-          echo '--- native libraries: exactly one ORT + sherpa JNI ---'
+          echo '--- native libraries: one ORT core + Java JNI + sherpa JNI ---'
+          test -f apkcheck/lib/arm64-v8a/libonnxruntime.so
+          test -f apkcheck/lib/arm64-v8a/libonnxruntime4j_jni.so
           test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-jni.so
           test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-c-api.so
           ORT_COUNT=$(find apkcheck/lib -type f -name 'libonnxruntime.so' | wc -l)
+          ORT_JNI_COUNT=$(find apkcheck/lib -type f -name 'libonnxruntime4j_jni.so' | wc -l)
           echo "libonnxruntime.so count: $ORT_COUNT"
+          echo "libonnxruntime4j_jni.so count: $ORT_JNI_COUNT"
           test "$ORT_COUNT" -eq 1
+          test "$ORT_JNI_COUNT" -eq 1
+
+          # Prove the packaged core is byte-for-byte the ORT core shipped by sherpa 1.13.5.
+          printf '%s  apkcheck/lib/arm64-v8a/libonnxruntime.so\n' "$(cat sherpa-core.sha256)" | sha256sum -c -
           find apkcheck/lib/arm64-v8a -maxdepth 1 -type f -printf '%f %s bytes\n' | sort | grep -E 'onnx|sherpa|ucd|kaldi'
 
           echo '--- manifest metadata ---'
@@ -198,7 +232,7 @@ jobs:
           grep -q "package: name='nie.translator.rtranslator.lite8'" apk-badging.txt
           grep -q "application-label:'RTranslator Lite8'" apk-badging.txt
 
-          echo 'Lite8 APK verified: sherpa ASR models, JNI and single ORT are present.'
+          echo 'Lite8 APK verified: INT8 sherpa ASR assets, JNI bridge and single ORT 1.27.1 core are present.'
 
       - name: Collect APK
         shell: bash
