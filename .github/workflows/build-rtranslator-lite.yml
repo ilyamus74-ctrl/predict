@@ -52,34 +52,43 @@ jobs:
             --shallow-submodules \
             https://github.com/niedev/RTranslator.git RTranslator
 
-      - name: Apply Lite5 patches
+      - name: Apply Lite6 patches
         shell: bash
         run: |
           python3 rtranslator-lite/patch_low_memory.py RTranslator
           python3 rtranslator-lite/patch_lite5_identity.py RTranslator
+          python3 rtranslator-lite/patch_lite6_real_downloader.py RTranslator
 
           echo '--- translation backend ---'
           grep -n 'Int4Acc4\|RTranslatorLite\|boolean arena' \
             RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java
 
-          echo '--- onboarding URLs: must be Whisper only ---'
-          grep -n 'releases/download/2.0.0/' \
-            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java
-          if grep -q 'releases/download/2.0.0/NLLB_' \
-            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java; then
-            echo 'ERROR: NLLB download URL survived Lite5 patch'
-            exit 1
-          fi
+          echo '--- prove AccessActivity uses DownloadFragment2 ---'
+          grep -n 'new DownloadFragment2' \
+            RTranslator/app/src/main/java/nie/translator/rtranslator/access/AccessActivity.java
 
-          echo '--- visible Lite5 marker ---'
-          grep -n 'LITE5 | Whisper only' \
-            RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment.java
+          echo '--- ACTIVE onboarding: DownloadFragment2 must be Whisper only ---'
+          ACTIVE=RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment2.java
+          grep -n 'new DownloadInfo\|Whisper_\|NLLB_' "$ACTIVE"
+
+          NLLB_COUNT=$(grep -c '"NLLB_.*\.onnx"' "$ACTIVE" || true)
+          WHISPER_COUNT=$(grep -c '"Whisper_.*\.onnx"' "$ACTIVE" || true)
+          echo "Active downloader NLLB entries: $NLLB_COUNT"
+          echo "Active downloader Whisper entries: $WHISPER_COUNT"
+          test "$NLLB_COUNT" -eq 0
+          test "$WHISPER_COUNT" -eq 6
+
+          echo '--- visible Lite6 marker must be in ACTIVE downloader ---'
+          grep -n 'LITE6 | ACTIVE Downloader2 | Whisper only' "$ACTIVE"
 
           echo '--- package/version ---'
           grep -n 'applicationId\|versionCode\|versionName' RTranslator/app/build.gradle | head
+          grep -q 'applicationId "nie.translator.rtranslator.lite6"' RTranslator/app/build.gradle
+          grep -q "versionName '3.0.0-alpha3-lite6'" RTranslator/app/build.gradle
 
           echo '--- app labels ---'
           grep -R '<string name="app_name"' RTranslator/app/src/main/res/values* | head -20
+          grep -R -q 'RTranslator Lite6' RTranslator/app/src/main/res/values*/strings.xml
 
       - name: Configure Android SDK path
         shell: bash
@@ -93,18 +102,28 @@ jobs:
           chmod +x gradlew
           ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
+      - name: Verify built APK markers
+        shell: bash
+        run: |
+          APK=RTranslator/app/build/outputs/apk/debug/app-debug.apk
+          unzip -q "$APK" -d apkcheck
+          strings apkcheck/classes*.dex > apk-strings.txt
+          grep -q 'LITE6 | ACTIVE Downloader2 | Whisper only' apk-strings.txt
+          grep -q 'Whisper_decoder.onnx' apk-strings.txt
+          echo 'Built APK contains Lite6 active-downloader marker.'
+
       - name: Collect APK
         shell: bash
         run: |
           mkdir -p out
           cp RTranslator/app/build/outputs/apk/debug/app-debug.apk \
-             out/RTranslator-3.0.0-alpha3-lite5-debug.apk
-          sha256sum out/RTranslator-3.0.0-alpha3-lite5-debug.apk | tee out/SHA256SUMS.txt
+             out/RTranslator-3.0.0-alpha3-lite6-debug.apk
+          sha256sum out/RTranslator-3.0.0-alpha3-lite6-debug.apk | tee out/SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-3.0.0-alpha3-lite5
+          name: RTranslator-3.0.0-alpha3-lite6
           path: out/*
           if-no-files-found: error
           retention-days: 14
