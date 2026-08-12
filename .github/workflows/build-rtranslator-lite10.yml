@@ -192,13 +192,32 @@ jobs:
 
           cd examples/llama.android
           chmod +x gradlew
-          ./gradlew --no-daemon :lib:assembleRelease
+          : > "$GITHUB_WORKSPACE/llama-build.log"
+          set +e
+          ./gradlew --no-daemon --stacktrace :lib:assembleRelease 2>&1 | tee "$GITHUB_WORKSPACE/llama-build.log"
+          GRADLE_RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$GRADLE_RC" -ne 0 ]; then
+            echo "llama.cpp Gradle build failed with exit code $GRADLE_RC" | tee -a "$GITHUB_WORKSPACE/llama-build.log"
+            exit "$GRADLE_RC"
+          fi
           AAR=lib/build/outputs/aar/lib-release.aar
           test -f "$AAR"
           unzip -l "$AAR" | tee "$GITHUB_WORKSPACE/llama-aar-contents.txt"
           grep -q 'jni/arm64-v8a/libai-chat.so' "$GITHUB_WORKSPACE/llama-aar-contents.txt"
           ! grep -q 'jni/x86_64/' "$GITHUB_WORKSPACE/llama-aar-contents.txt"
           cp "$AAR" "$GITHUB_WORKSPACE/RTranslator/app/libs/llama-android-lite10.aar"
+
+      - name: Upload llama.cpp build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-llama-build-diagnostics
+          path: |
+            llama-build.log
+            llama-aar-contents.txt
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Apply Lite10 patches
         shell: bash
