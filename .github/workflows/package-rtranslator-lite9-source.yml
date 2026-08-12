@@ -32,7 +32,7 @@ jobs:
             https://github.com/niedev/RTranslator.git RTranslator-Lite9-source
           cd RTranslator-Lite9-source
           git rev-parse HEAD > UPSTREAM_COMMIT.txt
-          git submodule status > SUBMODULES.txt
+          git submodule status --recursive > SUBMODULES.txt
 
       - name: Apply Lite9 source patches
         shell: bash
@@ -44,7 +44,9 @@ jobs:
           python3 rtranslator-lite/patch_lite6_real_downloader.py "$ROOT"
           python3 rtranslator-lite/patch_lite7_walkie_safety.py "$ROOT"
           python3 rtranslator-lite/patch_lite8_sherpa_asr.py "$ROOT"
-          python3 rtranslator-lite/patch_lite8_ort_bridge.py "$ROOT"
+          # Lite9 replaces the original Lite8 Maven ORT dependency directly with
+          # the matched local ORT 1.27.1 Android package. Do not apply the obsolete
+          # mixed-version Lite8 ORT bridge before it.
           python3 rtranslator-lite/patch_lite9_runtime_fix.py "$ROOT"
 
       - name: Add builder and reconstruction files
@@ -66,7 +68,7 @@ jobs:
           - patched Android application source for Lite9;
           - all recursively checked-out submodule source trees;
           - DANIIL patch scripts and CI workflows under `DANIIL-builder/`;
-          - upstream commit and submodule revision manifests.
+          - upstream commit and recursive submodule revision manifests.
 
           Intentionally excluded because they are generated/binary dependencies rather than source code:
           - APK/AAB/build outputs and Gradle caches;
