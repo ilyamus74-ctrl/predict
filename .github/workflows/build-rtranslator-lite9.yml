@@ -1,0 +1,257 @@
+name: Build RTranslator 3 Lite9 runtime fix
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/build-rtranslator-lite9.yml'
+      - 'rtranslator-lite/patch_lite9_runtime_fix.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8
+
+    steps:
+      - name: Checkout builder branch
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            'ndk;28.0.12674087' \
+            'cmake;3.22.1'
+
+      - name: Clone RTranslator v3.00
+        shell: bash
+        run: |
+          git clone \
+            --depth 1 \
+            --branch v3.00 \
+            --recurse-submodules \
+            --shallow-submodules \
+            https://github.com/niedev/RTranslator.git RTranslator
+
+      - name: Prepare matched ORT 1.27.1, sherpa AAR and INT8 ASR assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p RTranslator/app/libs
+
+          echo '=== sherpa-onnx Android AAR 1.13.5, strip its ORT copy ==='
+          curl -fL --retry 3 -o sherpa.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar
+          echo '6419cd8bc983e0c4fab06067f0fe0313fdc0f7103818ac1e7a08d50787b7a82b  sherpa.aar' | sha256sum -c -
+
+          rm -rf sherpa-aar
+          mkdir sherpa-aar
+          unzip -q sherpa.aar -d sherpa-aar
+          find sherpa-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
+          test -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so
+          test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-c-api.so
+          strings sherpa-aar/jni/arm64-v8a/libonnxruntime.so | grep -Fxq '1.27.1'
+          rm -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
+          rm -f sherpa-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+          test ! -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
+          (cd sherpa-aar && zip -qr ../RTranslator/app/libs/sherpa-onnx-1.13.5-no-ort-arm64.aar .)
+
+          echo '=== matched ONNX Runtime Android package used by sherpa build ==='
+          ORT_URL=https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.27.1/onnxruntime-android-1.27.1.zip
+          curl -fL --retry 3 -o ort-1.27.1.zip "$ORT_URL"
+          echo 'defade26209f72cf4fa9769b18052c842833d6bef12924595d26f03b995548ca  ort-1.27.1.zip' | sha256sum -c -
+
+          rm -rf ort-aar
+          mkdir ort-aar
+          unzip -q ort-1.27.1.zip -d ort-aar
+          test -f ort-aar/classes.jar
+          test -d ort-aar/jni
+          find ort-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+          strings ort-aar/jni/arm64-v8a/libonnxruntime.so | grep -Fxq '1.27.1'
+          file ort-aar/jni/arm64-v8a/libonnxruntime.so
+          file ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+          readelf -d ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so | grep NEEDED | tee ort-jni-needed.txt
+          grep -q 'libonnxruntime.so' ort-jni-needed.txt
+          (cd ort-aar && zip -qr ../RTranslator/app/libs/onnxruntime-android-1.27.1-full-arm64.aar .)
+
+          echo '=== sherpa JNI must depend on the same ORT core name ==='
+          readelf -d sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so | grep NEEDED | tee sherpa-jni-needed.txt
+          grep -q 'libonnxruntime.so' sherpa-jni-needed.txt
+
+          echo '=== official multilingual Whisper Small ==='
+          curl -fL --retry 3 -o whisper-small.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-small.tar.bz2
+          echo '486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6  whisper-small.tar.bz2' | sha256sum -c -
+          rm -rf whisper-model
+          mkdir whisper-model
+          tar -xjf whisper-small.tar.bz2 -C whisper-model
+
+          SRC=whisper-model/sherpa-onnx-whisper-small
+          DST=RTranslator/app/src/main/assets/sherpa
+          mkdir -p "$DST"
+          cp "$SRC/small-encoder.int8.onnx" "$DST/"
+          cp "$SRC/small-decoder.int8.onnx" "$DST/"
+          cp "$SRC/small-tokens.txt" "$DST/"
+
+          echo '=== Silero VAD INT8 ==='
+          curl -fL --retry 3 -o "$DST/silero_vad.int8.onnx" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.int8.onnx
+          echo 'c36d490aff5ab924ca6c7aeec4d8f6bd3d22db6fa17611b9c5b17eae58ac3a20  '"$DST/silero_vad.int8.onnx" | sha256sum -c -
+
+          test "$(stat -c%s "$DST/small-encoder.int8.onnx")" -eq 112442483
+          test "$(stat -c%s "$DST/small-decoder.int8.onnx")" -eq 262226114
+          test "$(stat -c%s "$DST/small-tokens.txt")" -eq 816730
+          test "$(stat -c%s "$DST/silero_vad.int8.onnx")" -eq 212860
+
+      - name: Apply Lite9 patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 rtranslator-lite/patch_low_memory.py RTranslator
+          python3 rtranslator-lite/patch_lite5_identity.py RTranslator
+          python3 rtranslator-lite/patch_lite6_real_downloader.py RTranslator
+          python3 rtranslator-lite/patch_lite7_walkie_safety.py RTranslator
+          python3 rtranslator-lite/patch_lite8_sherpa_asr.py RTranslator
+          python3 rtranslator-lite/patch_lite9_runtime_fix.py RTranslator
+
+          echo '--- matched ORT dependency, no Lite8 bridge ---'
+          grep -n 'onnxruntime-android-1.27.1-full-arm64.aar' RTranslator/app/build.gradle
+          grep -n 'sherpa-onnx-1.13.5-no-ort-arm64.aar' RTranslator/app/build.gradle
+          ! grep -q 'onnxruntime-android-1.24.3-no-core' RTranslator/app/build.gradle
+          ! grep -q "com.microsoft.onnxruntime:onnxruntime-android:1.27.1" RTranslator/app/build.gradle
+
+          echo '--- Translator startup guard ---'
+          TRANS=RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java
+          grep -n 'Initializing matched ONNX Runtime 1.27.1' "$TRANS"
+          grep -n 'ONNX Runtime initialization failed' "$TRANS"
+          grep -n 'Int4Acc4' "$TRANS"
+          grep -n 'boolean arena = !(mode == MADLAD' "$TRANS"
+
+          echo '--- sherpa ASR replacement ---'
+          REC=RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/voice/Recognizer.java
+          grep -n 'RTranslatorLite9' "$REC"
+          grep -n 'OfflineRecognizer' "$REC"
+          grep -n 'SileroVadModelConfig' "$REC"
+          grep -n 'small-encoder.int8.onnx' "$REC"
+          grep -n 'small-decoder.int8.onnx' "$REC"
+
+          echo '--- Lite9 package identity ---'
+          grep -q 'applicationId "nie.translator.rtranslator.lite9"' RTranslator/app/build.gradle
+          grep -q "versionName '3.0.0-alpha3-lite9'" RTranslator/app/build.gradle
+          grep -R -q 'RTranslator Lite9' RTranslator/app/src/main/res/values*/strings.xml
+          grep -R -q 'com.gallery.RTranslator.lite9.provider' RTranslator/app/src/main/AndroidManifest.xml
+
+      - name: Configure Android SDK path
+        shell: bash
+        run: |
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > RTranslator/local.properties
+
+      - name: Build debug APK
+        working-directory: RTranslator
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify built Lite9 APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=RTranslator/app/build/outputs/apk/debug/app-debug.apk
+          rm -rf apkcheck verify
+          mkdir -p verify
+          unzip -q "$APK" -d apkcheck
+          strings apkcheck/classes*.dex > verify/apk-strings.txt
+
+          echo '=== required DEX markers ==='
+          grep -q 'RTranslatorLite9' verify/apk-strings.txt
+          grep -q 'Initializing matched ONNX Runtime 1.27.1' verify/apk-strings.txt
+          grep -q 'small-encoder.int8.onnx' verify/apk-strings.txt
+          grep -q 'small-decoder.int8.onnx' verify/apk-strings.txt
+
+          echo '=== bundled models ==='
+          test -f apkcheck/assets/sherpa/small-encoder.int8.onnx
+          test -f apkcheck/assets/sherpa/small-decoder.int8.onnx
+          test -f apkcheck/assets/sherpa/small-tokens.txt
+          test -f apkcheck/assets/sherpa/silero_vad.int8.onnx
+          test "$(stat -c%s apkcheck/assets/sherpa/small-encoder.int8.onnx)" -eq 112442483
+          test "$(stat -c%s apkcheck/assets/sherpa/small-decoder.int8.onnx)" -eq 262226114
+
+          echo '=== one matched ORT native pair + sherpa JNI ==='
+          test -f apkcheck/lib/arm64-v8a/libonnxruntime.so
+          test -f apkcheck/lib/arm64-v8a/libonnxruntime4j_jni.so
+          test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-jni.so
+          test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-c-api.so
+          test "$(find apkcheck/lib -type f -name 'libonnxruntime.so' | wc -l)" -eq 1
+          test "$(find apkcheck/lib -type f -name 'libonnxruntime4j_jni.so' | wc -l)" -eq 1
+
+          CORE=apkcheck/lib/arm64-v8a/libonnxruntime.so
+          JNI=apkcheck/lib/arm64-v8a/libonnxruntime4j_jni.so
+          file "$CORE" | tee verify/ort-core-file.txt
+          file "$JNI" | tee verify/ort-jni-file.txt
+          strings "$CORE" | grep -Fxq '1.27.1'
+          readelf -d "$JNI" | grep NEEDED | tee verify/ort-jni-needed.txt
+          grep -q 'libonnxruntime.so' verify/ort-jni-needed.txt
+          readelf -d apkcheck/lib/arm64-v8a/libsherpa-onnx-jni.so | grep NEEDED | tee verify/sherpa-jni-needed.txt
+          grep -q 'libonnxruntime.so' verify/sherpa-jni-needed.txt
+          sha256sum "$CORE" "$JNI" | tee verify/native.sha256
+
+          echo '=== manifest metadata ==='
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$AAPT" dump badging "$APK" | tee verify/apk-badging.txt
+          grep -q "package: name='nie.translator.rtranslator.lite9'" verify/apk-badging.txt
+          grep -q "application-label:'RTranslator Lite9'" verify/apk-badging.txt
+
+          echo 'Lite9 APK verified: matched ORT 1.27.1 core/JNI, sherpa JNI and bundled ASR assets.' | tee verify/results.txt
+          cp "$APK" verify/app-debug.apk
+          sha256sum "$APK" | tee verify/apk.sha256
+
+      - name: Upload verifier diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite9-verifier-diagnostics
+          path: verify/*
+          if-no-files-found: ignore
+          retention-days: 2
+          compression-level: 0
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p out
+          cp RTranslator/app/build/outputs/apk/debug/app-debug.apk \
+             out/RTranslator-3.0.0-alpha3-lite9-runtimefix-debug.apk
+          sha256sum out/RTranslator-3.0.0-alpha3-lite9-runtimefix-debug.apk | tee out/SHA256SUMS.txt
+          ls -lh out/*
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-3.0.0-alpha3-lite9-runtimefix
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
