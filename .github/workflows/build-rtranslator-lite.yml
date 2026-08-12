@@ -72,11 +72,21 @@ jobs:
           grep -n 'new DownloadInfo\|Whisper_\|NLLB_' "$ACTIVE"
 
           NLLB_COUNT=$(grep -c '"NLLB_.*\.onnx"' "$ACTIVE" || true)
-          WHISPER_COUNT=$(grep -c '"Whisper_.*\.onnx"' "$ACTIVE" || true)
+          MODEL_COUNT=$(grep -c 'new DownloadInfo(' "$ACTIVE" || true)
           echo "Active downloader NLLB entries: $NLLB_COUNT"
-          echo "Active downloader Whisper entries: $WHISPER_COUNT"
+          echo "Active downloader model objects: $MODEL_COUNT"
           test "$NLLB_COUNT" -eq 0
-          test "$WHISPER_COUNT" -eq 6
+          test "$MODEL_COUNT" -eq 6
+
+          for MODEL in \
+            Whisper_cache_initializer.onnx \
+            Whisper_cache_initializer_batch.onnx \
+            Whisper_decoder.onnx \
+            Whisper_detokenizer.onnx \
+            Whisper_encoder.onnx \
+            Whisper_initializer.onnx; do
+            grep -q "\"$MODEL\"" "$ACTIVE"
+          done
 
           echo '--- visible Lite6 marker must be in ACTIVE downloader ---'
           grep -n 'LITE6 | ACTIVE Downloader2 | Whisper only' "$ACTIVE"
