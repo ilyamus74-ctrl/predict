@@ -1,0 +1,341 @@
+name: Package RTranslator Lite13 full source
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/package-rtranslator-lite13-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LLAMA_COMMIT: 0b1bad14ff204627636aeb1de22ddcd5acb859d4
+
+    steps:
+      - name: Checkout DANIIL builder branch
+        uses: actions/checkout@v4
+
+      - name: Clone RTranslator v3.00 with all submodules
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone \
+            --depth 1 \
+            --branch v3.00 \
+            --recurse-submodules \
+            --shallow-submodules \
+            https://github.com/niedev/RTranslator.git RTranslator-Lite13-source
+          cd RTranslator-Lite13-source
+          git rev-parse HEAD > UPSTREAM_COMMIT.txt
+          git submodule status --recursive > SUBMODULES.txt
+
+      - name: Clone and patch exact llama.cpp source used by Lite13
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
+          cd llama.cpp
+          git checkout "$LLAMA_COMMIT"
+          git rev-parse HEAD > LLAMA_COMMIT.txt
+
+          LIB=examples/llama.android/lib
+          GRADLE="$LIB/build.gradle.kts"
+          CPP="$LIB/src/main/cpp/ai_chat.cpp"
+          LOGGING="$LIB/src/main/cpp/logging.h"
+          ENGINE="$LIB/src/main/java/com/arm/aichat/internal/InferenceEngineImpl.kt"
+
+          sed -i 's/ndkVersion = "29.0.13113456"/ndkVersion = "28.0.12674087"/' "$GRADLE"
+          sed -i 's/minSdk = 33/minSdk = 28/' "$GRADLE"
+          sed -i 's/abiFilters += listOf("arm64-v8a", "x86_64")/abiFilters += listOf("arm64-v8a")/' "$GRADLE"
+          sed -i 's/-DGGML_CPU_ALL_VARIANTS=ON/-DGGML_CPU_ALL_VARIANTS=OFF/' "$GRADLE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('examples/llama.android/lib/src/main/cpp/logging.h')
+          s=p.read_text()
+          s=s.replace('''static inline int ai_should_log(int prio) {
+              return __android_log_is_loggable(prio, LOG_TAG, LOG_MIN_LEVEL);
+          }''','''static inline int ai_should_log(int prio) {
+          #if __ANDROID_API__ >= 30
+              return __android_log_is_loggable(prio, LOG_TAG, LOG_MIN_LEVEL);
+          #else
+              return prio >= LOG_MIN_LEVEL;
+          #endif
+          }''',1)
+          p.write_text(s)
+          PY
+
+          sed -i 's/DEFAULT_CONTEXT_SIZE    = 8192/DEFAULT_CONTEXT_SIZE    = 2048/' "$CPP"
+          sed -i 's/BATCH_SIZE              = 512/BATCH_SIZE              = 64/' "$CPP"
+          sed -i 's/DEFAULT_SAMPLER_TEMP    = 0.3f/DEFAULT_SAMPLER_TEMP    = 0.0f/' "$CPP"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('examples/llama.android/lib/src/main/cpp/ai_chat.cpp')
+          s=p.read_text()
+          s=s.replace('#include <string>\n', '#include <string>\n#include <algorithm>\n', 1)
+          s=s.replace('''static llama_batch                        g_batch;
+          static common_chat_templates_ptr          g_chat_templates;''','''static llama_batch                        g_batch;
+          static bool                               g_batch_initialized = false;
+          static common_chat_templates_ptr          g_chat_templates;
+          static std::string                        g_last_native_log;
+
+          static void lite13_log_callback(enum ggml_log_level level, const char * text, void * user) {
+              aichat_android_log_callback(level, text, user);
+              if (level == GGML_LOG_LEVEL_ERROR || level == GGML_LOG_LEVEL_WARN) {
+                  if (g_last_native_log.size() > 6000) {
+                      g_last_native_log.erase(0, g_last_native_log.size() - 4000);
+                  }
+                  g_last_native_log += text == nullptr ? "" : text;
+              }
+          }''',1)
+          s=s.replace('llama_log_set(aichat_android_log_callback, nullptr);', 'llama_log_set(lite13_log_callback, nullptr);', 1)
+          old='''    llama_model_params model_params = llama_model_default_params();
+
+              const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
+              LOGd("%s: Loading model from: \\n%s\\n", __func__, model_path);
+
+              auto *model = llama_model_load_from_file(model_path, model_params);
+              env->ReleaseStringUTFChars(jmodel_path, model_path);
+              if (!model) {
+                  return 1;
+              }
+              g_model = model;
+              return 0;'''
+          new='''    llama_model_params model_params = llama_model_default_params();
+              g_last_native_log.clear();
+
+              const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
+              LOGd("%s: Loading model from: \\n%s\\n", __func__, model_path);
+
+              auto *model = llama_model_load_from_file(model_path, model_params);
+              if (!model) {
+                  const std::string first_error = g_last_native_log;
+                  LOGw("Initial GGUF load failed; retrying without mmap");
+                  g_last_native_log = first_error + "\\n--- retry with load_mode=LLAMA_LOAD_MODE_NONE ---\\n";
+                  model_params.load_mode = LLAMA_LOAD_MODE_NONE;
+                  model = llama_model_load_from_file(model_path, model_params);
+              }
+              env->ReleaseStringUTFChars(jmodel_path, model_path);
+              if (!model) {
+                  if (g_last_native_log.empty()) g_last_native_log = "llama_model_load_from_file returned null";
+                  return 1;
+              }
+              g_model = model;
+              return 0;'''
+          if old not in s: raise SystemExit('native load block missing')
+          s=s.replace(old,new,1)
+
+          marker='''static llama_context *init_context'''
+          pos=s.find(marker)
+          if pos < 0: raise SystemExit('init_context marker missing')
+          jni='''extern "C"\nJNIEXPORT jstring JNICALL\nJava_com_arm_aichat_internal_InferenceEngineImpl_lastNativeError(JNIEnv *env, jobject /*unused*/) {\n    return env->NewStringUTF(g_last_native_log.c_str());\n}\n\n'''
+          s=s[:pos]+jni+s[pos:]
+
+          s=s.replace('''    g_batch = llama_batch_init(BATCH_SIZE, 0, 1);
+              g_chat_templates = common_chat_templates_init(g_model, "");''','''    g_batch = llama_batch_init(BATCH_SIZE, 0, 1);
+              g_batch_initialized = true;
+              g_chat_templates = common_chat_templates_init(g_model, "");''',1)
+
+          old_unload='''Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {
+              // Reset long-term & short-term states
+              reset_long_term_states();
+              reset_short_term_states();
+
+              // Free up resources
+              common_sampler_free(g_sampler);
+              g_chat_templates.reset();
+              llama_batch_free(g_batch);
+              llama_free(g_context);
+              llama_model_free(g_model);
+          }'''
+          new_unload='''Java_com_arm_aichat_internal_InferenceEngineImpl_unload(JNIEnv * /*unused*/, jobject /*unused*/) {
+              reset_long_term_states(false);
+              reset_short_term_states();
+              if (g_sampler != nullptr) { common_sampler_free(g_sampler); g_sampler = nullptr; }
+              g_chat_templates.reset();
+              if (g_batch_initialized) { llama_batch_free(g_batch); g_batch = {}; g_batch_initialized = false; }
+              if (g_context != nullptr) { llama_free(g_context); g_context = nullptr; }
+              if (g_model != nullptr) { llama_model_free(g_model); g_model = nullptr; }
+          }'''
+          if old_unload not in s: raise SystemExit('unload block missing')
+          s=s.replace(old_unload,new_unload,1)
+
+          marker='Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt'
+          pos=s.find(marker)
+          if pos < 0: raise SystemExit('prompt marker missing')
+          head, tail = s[:pos], s[pos:]
+          tail=tail.replace('const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());',
+                            'const bool has_chat_template = false; // Lite13 raw MT prompt',1)
+          tail=tail.replace('common_tokenize(g_context, formatted_user_prompt, has_chat_template, has_chat_template)',
+                            'common_tokenize(g_context, formatted_user_prompt, false, true)',1)
+          p.write_text(head+tail)
+          PY
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('examples/llama.android/lib/src/main/java/com/arm/aichat/internal/InferenceEngineImpl.kt')
+          s=p.read_text()
+          s=s.replace('''    @FastNative
+              private external fun load(modelPath: String): Int
+
+              @FastNative
+              private external fun prepare(): Int''','''    @FastNative
+              private external fun load(modelPath: String): Int
+
+              @FastNative
+              private external fun lastNativeError(): String
+
+              @FastNative
+              private external fun prepare(): Int''',1)
+          s=s.replace('''                load(pathToModel).let {
+                          // TODO-han.yin: find a better way to pass other error codes
+                          if (it != 0) throw UnsupportedArchitectureException()
+                      }''','''                load(pathToModel).let {
+                          if (it != 0) {
+                              val detail = lastNativeError().trim().takeLast(2400)
+                              throw IOException("llama.cpp model load failed" + if (detail.isBlank()) "" else ": $detail")
+                          }
+                      }''',1)
+          pattern = r'''is InferenceEngine\.State\.Error -> \{\s*Log\.i\(TAG, "Resetting error states\.\.\."\)\s*_state\.value = InferenceEngine\.State\.Initialized\s*Log\.i\(TAG, "States reset!"\)\s*Unit\s*\}'''
+          repl='''is InferenceEngine.State.Error -> {
+                    Log.i(TAG, "Cleaning resources from failed/partial model load...")
+                    _readyForSystemPrompt = false
+                    unload()
+                    _state.value = InferenceEngine.State.Initialized
+                    Log.i(TAG, "Failed model resources cleaned; state reset!")
+                    Unit
+                }'''
+          s,n=re.subn(pattern,repl,s,count=1)
+          if n != 1: raise SystemExit(f'Error cleanup replacements={n}')
+          p.write_text(s)
+          PY
+
+          cat > "$LIB/src/main/java/com/arm/aichat/TranslationBridge.kt" <<'KOT'
+          package com.arm.aichat
+
+          import android.content.Context
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.flow.toList
+          import kotlinx.coroutines.runBlocking
+
+          class TranslationBridge private constructor(context: Context) {
+              private val engine: InferenceEngine = AiChat.getInferenceEngine(context.applicationContext)
+
+              private suspend fun awaitInitialized() {
+                  val s = engine.state.first { it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error }
+                  if (s is InferenceEngine.State.Error) engine.cleanUp()
+                  engine.state.first { it is InferenceEngine.State.Initialized }
+              }
+
+              @Synchronized fun loadModel(path: String) = runBlocking { awaitInitialized(); engine.loadModel(path) }
+              @Synchronized fun generateRaw(prompt: String, maxTokens: Int): String = runBlocking {
+                  engine.sendUserPrompt(prompt, maxTokens).toList().joinToString("")
+              }
+              @Synchronized fun unload() {
+                  when (engine.state.value) {
+                      is InferenceEngine.State.ModelReady, is InferenceEngine.State.Error -> engine.cleanUp()
+                      else -> Unit
+                  }
+              }
+              companion object { @JvmStatic fun create(context: Context) = TranslationBridge(context) }
+          }
+          KOT
+
+          grep -q 'lastNativeError' "$ENGINE"
+          grep -q 'retrying without mmap' "$CPP"
+          grep -q 'BATCH_SIZE              = 64' "$CPP"
+
+          cd ..
+          mkdir -p RTranslator-Lite13-source/third_party
+          mv llama.cpp RTranslator-Lite13-source/third_party/llama.cpp
+
+      - name: Apply Lite13 application patch chain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=RTranslator-Lite13-source
+          python3 rtranslator-lite/patch_low_memory.py "$ROOT"
+          python3 rtranslator-lite/patch_lite5_identity.py "$ROOT"
+          python3 rtranslator-lite/patch_lite6_real_downloader.py "$ROOT"
+          python3 rtranslator-lite/patch_lite7_walkie_safety.py "$ROOT"
+          python3 rtranslator-lite/patch_lite8_sherpa_asr.py "$ROOT"
+          python3 rtranslator-lite/patch_lite9_runtime_fix.py "$ROOT"
+          python3 rtranslator-lite/patch_lite10_llama_models.py "$ROOT"
+          python3 rtranslator-lite/patch_lite11_documents_ocr.py "$ROOT"
+          python3 rtranslator-lite/patch_lite12_llama_runtime_fix.py "$ROOT"
+          python3 rtranslator-lite/patch_lite13_gguf_loader.py "$ROOT"
+          grep -q 'applicationId "nie.translator.rtranslator.lite13"' "$ROOT/app/build.gradle"
+          grep -q 'Invalid GGUF header' "$ROOT/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/LlamaCppTranslationEngine.java"
+
+      - name: Add DANIIL builder and source manifest
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=RTranslator-Lite13-source
+          mkdir -p "$ROOT/DANIIL-builder/.github/workflows"
+          cp -a rtranslator-lite "$ROOT/DANIIL-builder/"
+          cp .github/workflows/build-rtranslator-lite13.yml "$ROOT/DANIIL-builder/.github/workflows/"
+          cp .github/workflows/package-rtranslator-lite13-source.yml "$ROOT/DANIIL-builder/.github/workflows/"
+          git rev-parse HEAD > "$ROOT/DANIIL_BUILDER_COMMIT.txt"
+          cat > "$ROOT/SOURCE_SNAPSHOT.md" <<'EOF'
+          # RTranslator Lite13 full source snapshot
+
+          This archive is a complete source snapshot for the DANIIL RTranslator Lite13 build.
+
+          Included:
+          - RTranslator v3.00 Android application source with Lite13 patches already applied;
+          - all recursively checked-out RTranslator source submodules;
+          - exact llama.cpp source at commit 0b1bad14ff204627636aeb1de22ddcd5acb859d4 with the Lite13 Android native changes already applied;
+          - DANIIL patch scripts and Lite13 CI/build workflows under `DANIIL-builder/`;
+          - upstream, submodule, llama.cpp, and DANIIL builder revision manifests.
+
+          Intentionally excluded because they are generated or binary payloads rather than source code:
+          - APK/AAB/build outputs and Gradle caches;
+          - GGUF/ONNX/TFLite/model weights and OCR traineddata;
+          - downloaded AAR/JAR dependency binaries;
+          - Git object databases (`.git`).
+
+          The included `DANIIL-builder/.github/workflows/build-rtranslator-lite13.yml` documents and reproduces the exact binary dependency downloads and Lite13 APK build procedure.
+          EOF
+
+      - name: Remove generated and binary payloads
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=RTranslator-Lite13-source
+          find "$ROOT" -type d \( -name .git -o -name .gradle -o -name build -o -name .cxx \) -prune -exec rm -rf {} + || true
+          find "$ROOT" -type f \( \
+            -name '*.apk' -o -name '*.aab' -o -name '*.aar' -o -name '*.jar' -o \
+            -name '*.gguf' -o -name '*.onnx' -o -name '*.tflite' -o -name '*.pt' -o \
+            -name '*.traineddata' -o -name '*.zip' -o -name '*.tar' -o \
+            -name '*.tar.gz' -o -name '*.tar.bz2' \
+          \) -delete || true
+
+      - name: Build complete source ZIP
+        shell: bash
+        run: |
+          set -euxo pipefail
+          zip -9 -r RTranslator-Lite13-full-source.zip RTranslator-Lite13-source >/dev/null
+          sha256sum RTranslator-Lite13-full-source.zip > RTranslator-Lite13-full-source.zip.sha256
+          ls -lh RTranslator-Lite13-full-source.zip
+          du -sh RTranslator-Lite13-source
+          cat RTranslator-Lite13-full-source.zip.sha256
+
+      - name: Upload complete Lite13 source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite13-full-source
+          path: |
+            RTranslator-Lite13-full-source.zip
+            RTranslator-Lite13-full-source.zip.sha256
+          retention-days: 14
+          compression-level: 0
