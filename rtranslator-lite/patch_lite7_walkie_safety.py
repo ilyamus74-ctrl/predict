@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
 import sys
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else "RTranslator")
@@ -82,25 +81,24 @@ df2_path.write_text(df2.replace(
 changed_labels = 0
 for strings_xml in (ROOT / "app/src/main/res").glob("values*/strings.xml"):
     text = strings_xml.read_text(encoding="utf-8")
-    new_text, count = re.subn(
-        r'(<string\\s+name="app_name"[^>]*>).*?(</string>)',
-        r'\\1RTranslator Lite7\\2',
-        text,
-        count=1,
-        flags=re.S,
-    )
-    if count:
-        strings_xml.write_text(new_text, encoding="utf-8")
+    if "RTranslator Lite6" in text:
+        strings_xml.write_text(text.replace("RTranslator Lite6", "RTranslator Lite7"), encoding="utf-8")
         changed_labels += 1
 if changed_labels == 0:
-    raise SystemExit("No app_name resources updated for Lite7")
+    raise SystemExit("No RTranslator Lite6 app_name resource found for Lite7")
 
 bg = build_gradle.read_text(encoding="utf-8")
-if 'applicationId "nie.translator.rtranslator.lite6"' not in bg:
-    raise SystemExit("Expected Lite6 applicationId before Lite7 patch")
+required_gradle_strings = [
+    'applicationId "nie.translator.rtranslator.lite6"',
+    'versionCode 30008',
+    "versionName '3.0.0-alpha3-lite6'",
+]
+for value in required_gradle_strings:
+    if value not in bg:
+        raise SystemExit(f"Expected Lite6 Gradle value not found: {value}")
 bg = bg.replace('applicationId "nie.translator.rtranslator.lite6"', 'applicationId "nie.translator.rtranslator.lite7"', 1)
-bg = re.sub(r'versionCode\\s+\\d+', 'versionCode 30009', bg, count=1)
-bg = re.sub(r"versionName\\s+'[^']+'", "versionName '3.0.0-alpha3-lite7'", bg, count=1)
+bg = bg.replace('versionCode 30008', 'versionCode 30009', 1)
+bg = bg.replace("versionName '3.0.0-alpha3-lite6'", "versionName '3.0.0-alpha3-lite7'", 1)
 build_gradle.write_text(bg, encoding="utf-8")
 
 old_authority = 'com.gallery.RTranslator.lite6.provider'
