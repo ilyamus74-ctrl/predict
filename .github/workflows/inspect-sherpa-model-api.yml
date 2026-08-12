@@ -1,0 +1,78 @@
+name: Inspect sherpa Java API and model
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/inspect-sherpa-model-api.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download official sherpa AAR
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 -o sherpa.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar
+          unzip -q sherpa.aar classes.jar
+          sha256sum sherpa.aar
+
+      - name: Inspect exact Java API
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for cls in \
+            com.k2fsa.sherpa.onnx.OfflineRecognizer \
+            com.k2fsa.sherpa.onnx.OfflineRecognizerConfig \
+            com.k2fsa.sherpa.onnx.OfflineModelConfig \
+            com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig \
+            com.k2fsa.sherpa.onnx.FeatureConfig \
+            com.k2fsa.sherpa.onnx.OfflineStream \
+            com.k2fsa.sherpa.onnx.OfflineRecognizerResult \
+            com.k2fsa.sherpa.onnx.Vad \
+            com.k2fsa.sherpa.onnx.VadModelConfig \
+            com.k2fsa.sherpa.onnx.SileroVadModelConfig; do
+              echo "===== $cls ====="
+              javap -classpath classes.jar -public "$cls" || true
+          done
+
+      - name: Download and list official multilingual Whisper small
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 -o whisper-small.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-small.tar.bz2
+          echo '=== ARCHIVE ==='
+          ls -lh whisper-small.tar.bz2
+          sha256sum whisper-small.tar.bz2
+          echo '=== MODEL LAYOUT ==='
+          tar -tjf whisper-small.tar.bz2 | head -200
+          rm -rf model
+          mkdir model
+          tar -xjf whisper-small.tar.bz2 -C model
+          echo '=== FILE SIZES ==='
+          find model -type f -printf '%p %s bytes\n' | sort
+
+      - name: Verify Silero VAD INT8 asset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 3 -o silero_vad.int8.onnx \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.int8.onnx
+          ls -lh silero_vad.int8.onnx
+          sha256sum silero_vad.int8.onnx
+          echo 'Expected: c36d490aff5ab924ca6c7aeec4d8f6bd3d22db6fa17611b9c5b17eae58ac3a20'
