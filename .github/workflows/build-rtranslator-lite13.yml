@@ -170,9 +170,9 @@ jobs:
               auto *model = llama_model_load_from_file(model_path, model_params);
               if (!model) {
                   const std::string first_error = g_last_native_log;
-                  LOGw("Initial GGUF load failed; retrying with mmap disabled");
-                  g_last_native_log = first_error + "\\n--- retry with use_mmap=false ---\\n";
-                  model_params.use_mmap = false;
+                  LOGw("Initial GGUF load failed; retrying without mmap");
+                  g_last_native_log = first_error + "\\n--- retry with load_mode=LLAMA_LOAD_MODE_NONE ---\\n";
+                  model_params.load_mode = LLAMA_LOAD_MODE_NONE;
                   model = llama_model_load_from_file(model_path, model_params);
               }
               env->ReleaseStringUTFChars(jmodel_path, model_path);
@@ -302,7 +302,7 @@ jobs:
           KOT
 
           grep -q 'lastNativeError' "$ENGINE"
-          grep -q 'retrying with mmap disabled' "$CPP"
+          grep -q 'retrying without mmap' "$CPP"
           grep -q 'BATCH_SIZE              = 64' "$CPP"
 
           cd examples/llama.android
