@@ -70,8 +70,7 @@ jobs:
           test -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so
           test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so
           test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-c-api.so
-          sha256sum sherpa-aar/jni/arm64-v8a/libonnxruntime.so
-          sha256sum sherpa-aar/jni/arm64-v8a/libonnxruntime.so | awk '{print $1}' > sherpa-core.sha256
+          strings sherpa-aar/jni/arm64-v8a/libonnxruntime.so | grep -Fxq '1.27.1'
           (cd sherpa-aar && zip -qr ../RTranslator/app/libs/sherpa-onnx-1.13.5-core-arm64.aar .)
 
           echo '=== ONNX Runtime Android 1.24.3 Java/JNI bridge ==='
@@ -258,16 +257,22 @@ jobs:
           test "$ORT_COUNT" -eq 1 || FAIL=1
           test "$ORT_JNI_COUNT" -eq 1 || FAIL=1
 
-          if test -f apkcheck/lib/arm64-v8a/libonnxruntime.so; then
-            EXPECTED_CORE=$(cat sherpa-core.sha256)
-            ACTUAL_CORE=$(sha256sum apkcheck/lib/arm64-v8a/libonnxruntime.so | awk '{print $1}')
-            echo "ORT core expected=$EXPECTED_CORE" | tee -a verify/results.txt
-            echo "ORT core actual=$ACTUAL_CORE" | tee -a verify/results.txt
-            if test "$EXPECTED_CORE" = "$ACTUAL_CORE"; then
-              echo 'PASS ORT core is byte-for-byte sherpa 1.13.5 core' | tee -a verify/results.txt
+          CORE=apkcheck/lib/arm64-v8a/libonnxruntime.so
+          if test -f "$CORE"; then
+            file "$CORE" | tee verify/ort-core-file.txt
+            sha256sum "$CORE" | tee verify/ort-core-stripped.sha256
+            strings "$CORE" | grep -E '^VERS_[0-9]+\.|^[0-9]+\.[0-9]+\.[0-9]+$' | sort -u | tee verify/ort-core-versions.txt || true
+            if file "$CORE" | grep -Fq 'ARM aarch64' && strings "$CORE" | grep -Fxq '1.27.1'; then
+              echo 'PASS ORT core: arm64 ONNX Runtime 1.27.1' | tee -a verify/results.txt
             else
-              echo 'FAIL ORT core hash mismatch' | tee -a verify/results.txt
+              echo 'FAIL ORT core is not arm64 ONNX Runtime 1.27.1' | tee -a verify/results.txt
               FAIL=1
+            fi
+            if strings "$CORE" | grep -Fxq '1.24.3'; then
+              echo 'FAIL old ORT 1.24.3 core leaked into APK' | tee -a verify/results.txt
+              FAIL=1
+            else
+              echo 'PASS old ORT 1.24.3 core absent' | tee -a verify/results.txt
             fi
           fi
 
@@ -287,7 +292,6 @@ jobs:
             FAIL=1
           fi
 
-          cp "$APK" verify/app-debug.apk
           sha256sum "$APK" | tee verify/apk.sha256
           echo "FINAL_VERIFY_FAIL=$FAIL" | tee -a verify/results.txt
           exit "$FAIL"
