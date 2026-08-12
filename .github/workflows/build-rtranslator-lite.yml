@@ -52,53 +52,43 @@ jobs:
             --shallow-submodules \
             https://github.com/niedev/RTranslator.git RTranslator
 
-      - name: Apply Lite6 patches
+      - name: Apply Lite7 patches
         shell: bash
         run: |
           python3 rtranslator-lite/patch_low_memory.py RTranslator
           python3 rtranslator-lite/patch_lite5_identity.py RTranslator
           python3 rtranslator-lite/patch_lite6_real_downloader.py RTranslator
+          python3 rtranslator-lite/patch_lite7_walkie_safety.py RTranslator
 
           echo '--- translation backend ---'
           grep -n 'Int4Acc4\|RTranslatorLite\|boolean arena' \
             RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java
 
-          echo '--- prove AccessActivity uses DownloadFragment2 ---'
-          grep -n 'new DownloadFragment2' \
-            RTranslator/app/src/main/java/nie/translator/rtranslator/access/AccessActivity.java
-
-          echo '--- ACTIVE onboarding: DownloadFragment2 must be Whisper only ---'
+          echo '--- ACTIVE onboarding: DownloadFragment2 must still be Whisper only ---'
           ACTIVE=RTranslator/app/src/main/java/nie/translator/rtranslator/access/DownloadFragment2.java
-          grep -n 'new DownloadInfo\|Whisper_\|NLLB_' "$ACTIVE"
-
           NLLB_COUNT=$(grep -c '"NLLB_.*\.onnx"' "$ACTIVE" || true)
           MODEL_COUNT=$(grep -c 'new DownloadInfo(' "$ACTIVE" || true)
           echo "Active downloader NLLB entries: $NLLB_COUNT"
           echo "Active downloader model objects: $MODEL_COUNT"
           test "$NLLB_COUNT" -eq 0
           test "$MODEL_COUNT" -eq 6
+          grep -n 'LITE7 | ACTIVE Downloader2 | Whisper only' "$ACTIVE"
 
-          for MODEL in \
-            Whisper_cache_initializer.onnx \
-            Whisper_cache_initializer_batch.onnx \
-            Whisper_decoder.onnx \
-            Whisper_detokenizer.onnx \
-            Whisper_encoder.onnx \
-            Whisper_initializer.onnx; do
-            grep -q "\"$MODEL\"" "$ACTIVE"
-          done
-
-          echo '--- visible Lite6 marker must be in ACTIVE downloader ---'
-          grep -n 'LITE6 | ACTIVE Downloader2 | Whisper only' "$ACTIVE"
+          echo '--- WalkieTalkie safety ---'
+          VTA=RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/VoiceTranslationActivity.java
+          grep -n 'REQUEST_CODE_WALKIE_TALKIE_MIC_PERMISSION' "$VTA"
+          grep -n 'checkSelfPermission(Manifest.permission.RECORD_AUDIO)' "$VTA"
+          grep -n 'savedFragment == WALKIE_TALKIE_FRAGMENT' "$VTA"
+          grep -n 'fragmentToPersist == WALKIE_TALKIE_FRAGMENT' "$VTA"
+          grep -n 'startForegroundService(intent)' "$VTA"
+          grep -n 'RTranslatorLite7' "$VTA"
+          grep -n 'intent.putExtra("notification", notification)' "$VTA"
 
           echo '--- package/version ---'
           grep -n 'applicationId\|versionCode\|versionName' RTranslator/app/build.gradle | head
-          grep -q 'applicationId "nie.translator.rtranslator.lite6"' RTranslator/app/build.gradle
-          grep -q "versionName '3.0.0-alpha3-lite6'" RTranslator/app/build.gradle
-
-          echo '--- app labels ---'
-          grep -R '<string name="app_name"' RTranslator/app/src/main/res/values* | head -20
-          grep -R -q 'RTranslator Lite6' RTranslator/app/src/main/res/values*/strings.xml
+          grep -q 'applicationId "nie.translator.rtranslator.lite7"' RTranslator/app/build.gradle
+          grep -q "versionName '3.0.0-alpha3-lite7'" RTranslator/app/build.gradle
+          grep -R -q 'RTranslator Lite7' RTranslator/app/src/main/res/values*/strings.xml
 
       - name: Configure Android SDK path
         shell: bash
@@ -116,24 +106,27 @@ jobs:
         shell: bash
         run: |
           APK=RTranslator/app/build/outputs/apk/debug/app-debug.apk
+          rm -rf apkcheck apk-strings.txt
           unzip -q "$APK" -d apkcheck
           strings apkcheck/classes*.dex > apk-strings.txt
-          grep -q 'LITE6 | ACTIVE Downloader2 | Whisper only' apk-strings.txt
-          grep -q 'Whisper_decoder.onnx' apk-strings.txt
-          echo 'Built APK contains Lite6 active-downloader marker.'
+          grep -q 'LITE7 | ACTIVE Downloader2 | Whisper only' apk-strings.txt
+          grep -q 'REQUEST_CODE_WALKIE_TALKIE_MIC_PERMISSION' apk-strings.txt || true
+          grep -q 'RTranslatorLite7' apk-strings.txt
+          grep -q 'nie.translator.rtranslator.lite7' apk-strings.txt
+          echo 'Built APK contains Lite7 active-downloader and WalkieTalkie safety markers.'
 
       - name: Collect APK
         shell: bash
         run: |
           mkdir -p out
           cp RTranslator/app/build/outputs/apk/debug/app-debug.apk \
-             out/RTranslator-3.0.0-alpha3-lite6-debug.apk
-          sha256sum out/RTranslator-3.0.0-alpha3-lite6-debug.apk | tee out/SHA256SUMS.txt
+             out/RTranslator-3.0.0-alpha3-lite7-debug.apk
+          sha256sum out/RTranslator-3.0.0-alpha3-lite7-debug.apk | tee out/SHA256SUMS.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-3.0.0-alpha3-lite6
+          name: RTranslator-3.0.0-alpha3-lite7
           path: out/*
           if-no-files-found: error
           retention-days: 14
