@@ -37,7 +37,17 @@ jobs:
           test -f lite10/RTranslator-lite10.apk.part-00
           test -f lite10/RTranslator-lite10.apk.part-01
           test -f lite10/RTranslator-lite10.apk.part-02
-          ls -lh lite10/RTranslator-lite10.apk.part-* lite10/APK-SHA256.txt
+          ls -lh "$APK" lite10/RTranslator-lite10.apk.part-* lite10/APK-SHA256.txt
+
+      - name: Upload compressed ready APK bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-ready-apk
+          path: |
+            lite10/RTranslator-3.0.0-alpha3-lite10-llama-debug.apk
+            lite10/APK-SHA256.txt
+          compression-level: 9
+          retention-days: 14
 
       - name: Upload APK part 00
         uses: actions/upload-artifact@v4
