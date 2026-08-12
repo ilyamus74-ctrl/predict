@@ -151,7 +151,7 @@ jobs:
           p.write_text(s.replace(old, new, 1))
           PY
 
-          # Mobile MT profile. 512 batch is excessive for Gemma3's 262k vocabulary.
+          # Mobile MT profile. 512 batch is excessive for Gemma3's large vocabulary.
           sed -i 's/DEFAULT_CONTEXT_SIZE    = 8192/DEFAULT_CONTEXT_SIZE    = 2048/' "$CPP"
           sed -i 's/BATCH_SIZE              = 512/BATCH_SIZE              = 64/' "$CPP"
           sed -i 's/DEFAULT_SAMPLER_TEMP    = 0.3f/DEFAULT_SAMPLER_TEMP    = 0.0f/' "$CPP"
@@ -230,27 +230,24 @@ jobs:
           p.write_text(head+tail)
           PY
 
-          # Upstream only resets Error state and leaks a model if native load succeeded but prepare failed.
+          # Upstream Error cleanup only resets Kotlin state. Replace it independent of whitespace.
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p=Path('examples/llama.android/lib/src/main/java/com/arm/aichat/internal/InferenceEngineImpl.kt')
           s=p.read_text()
-          old='''                is InferenceEngine.State.Error -> {
-                      Log.i(TAG, "Resetting error states...")
-                      _state.value = InferenceEngine.State.Initialized
-                      Log.i(TAG, "States reset!")
-                      Unit
-                  }'''
-          new='''                is InferenceEngine.State.Error -> {
-                      Log.i(TAG, "Cleaning resources from failed/partial model load...")
-                      _readyForSystemPrompt = false
-                      unload()
-                      _state.value = InferenceEngine.State.Initialized
-                      Log.i(TAG, "Failed model resources cleaned; state reset!")
-                      Unit
-                  }'''
-          if old not in s: raise SystemExit('InferenceEngine Error cleanup block missing')
-          p.write_text(s.replace(old,new,1))
+          pattern = r'''is InferenceEngine\.State\.Error -> \{\s*Log\.i\(TAG, "Resetting error states\.\.\."\)\s*_state\.value = InferenceEngine\.State\.Initialized\s*Log\.i\(TAG, "States reset!"\)\s*Unit\s*\}'''
+          replacement = '''is InferenceEngine.State.Error -> {
+                    Log.i(TAG, "Cleaning resources from failed/partial model load...")
+                    _readyForSystemPrompt = false
+                    unload()
+                    _state.value = InferenceEngine.State.Initialized
+                    Log.i(TAG, "Failed model resources cleaned; state reset!")
+                    Unit
+                }'''
+          s2, n = re.subn(pattern, replacement, s, count=1)
+          if n != 1: raise SystemExit(f'InferenceEngine Error cleanup block replacements={n}')
+          p.write_text(s2)
           PY
 
           # Java-friendly blocking facade around official coroutine API.
