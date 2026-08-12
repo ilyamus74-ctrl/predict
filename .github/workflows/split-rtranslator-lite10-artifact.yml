@@ -26,56 +26,78 @@ jobs:
           run-id: 31574678752
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify and split APK
+      - name: Verify APK and create Drive delivery volumes
         shell: bash
         run: |
           set -euxo pipefail
           APK=lite10/RTranslator-3.0.0-alpha3-lite10-llama-debug.apk
           test -f "$APK"
           sha256sum "$APK" | tee lite10/APK-SHA256.txt
-          split -b 200M -d -a 2 "$APK" lite10/RTranslator-lite10.apk.part-
-          test -f lite10/RTranslator-lite10.apk.part-00
-          test -f lite10/RTranslator-lite10.apk.part-01
-          test -f lite10/RTranslator-lite10.apk.part-02
-          ls -lh "$APK" lite10/RTranslator-lite10.apk.part-* lite10/APK-SHA256.txt
 
-      - name: Upload compressed ready APK bundle
+          zip -9 -j lite10/RTranslator-lite10-ready.zip "$APK" lite10/APK-SHA256.txt
+          sha256sum lite10/RTranslator-lite10-ready.zip | tee lite10/RTranslator-lite10-ready.zip.sha256
+          split -b 75M -d -a 2 lite10/RTranslator-lite10-ready.zip lite10/RTranslator-lite10-ready.zip.part-
+
+          test -f lite10/RTranslator-lite10-ready.zip.part-00
+          test -f lite10/RTranslator-lite10-ready.zip.part-01
+          test -f lite10/RTranslator-lite10-ready.zip.part-02
+          test -f lite10/RTranslator-lite10-ready.zip.part-03
+          test -z "$(find lite10 -maxdepth 1 -name 'RTranslator-lite10-ready.zip.part-04' -print -quit)"
+
+          cat > lite10/README-REASSEMBLE.txt <<'EOF'
+          RTranslator Lite10 delivery package
+
+          Join the four files in numeric order to recreate RTranslator-lite10-ready.zip.
+
+          Windows CMD:
+          copy /b RTranslator-lite10-ready.zip.part-00+RTranslator-lite10-ready.zip.part-01+RTranslator-lite10-ready.zip.part-02+RTranslator-lite10-ready.zip.part-03 RTranslator-lite10-ready.zip
+
+          Linux/macOS:
+          cat RTranslator-lite10-ready.zip.part-00 RTranslator-lite10-ready.zip.part-01 RTranslator-lite10-ready.zip.part-02 RTranslator-lite10-ready.zip.part-03 > RTranslator-lite10-ready.zip
+
+          Then extract RTranslator-lite10-ready.zip. It contains the installable APK and APK-SHA256.txt.
+          EOF
+
+          ls -lh lite10/RTranslator-lite10-ready.zip lite10/RTranslator-lite10-ready.zip.part-* lite10/*.sha256 lite10/APK-SHA256.txt lite10/README-REASSEMBLE.txt
+
+      - name: Upload Drive volume 00
         uses: actions/upload-artifact@v4
         with:
-          name: RTranslator-lite10-ready-apk
+          name: RTranslator-lite10-drive-volume-00
+          path: lite10/RTranslator-lite10-ready.zip.part-00
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive volume 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-drive-volume-01
+          path: lite10/RTranslator-lite10-ready.zip.part-01
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive volume 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-drive-volume-02
+          path: lite10/RTranslator-lite10-ready.zip.part-02
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive volume 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-drive-volume-03
+          path: lite10/RTranslator-lite10-ready.zip.part-03
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Drive manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-lite10-drive-manifest
           path: |
-            lite10/RTranslator-3.0.0-alpha3-lite10-llama-debug.apk
             lite10/APK-SHA256.txt
-          compression-level: 9
-          retention-days: 14
-
-      - name: Upload APK part 00
-        uses: actions/upload-artifact@v4
-        with:
-          name: RTranslator-lite10-apk-part-00
-          path: lite10/RTranslator-lite10.apk.part-00
-          compression-level: 0
-          retention-days: 14
-
-      - name: Upload APK part 01
-        uses: actions/upload-artifact@v4
-        with:
-          name: RTranslator-lite10-apk-part-01
-          path: lite10/RTranslator-lite10.apk.part-01
-          compression-level: 0
-          retention-days: 14
-
-      - name: Upload APK part 02
-        uses: actions/upload-artifact@v4
-        with:
-          name: RTranslator-lite10-apk-part-02
-          path: lite10/RTranslator-lite10.apk.part-02
-          compression-level: 0
-          retention-days: 14
-
-      - name: Upload APK checksum
-        uses: actions/upload-artifact@v4
-        with:
-          name: RTranslator-lite10-apk-sha256
-          path: lite10/APK-SHA256.txt
+            lite10/RTranslator-lite10-ready.zip.sha256
+            lite10/README-REASSEMBLE.txt
           retention-days: 14
