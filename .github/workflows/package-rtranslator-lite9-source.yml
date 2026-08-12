@@ -1,0 +1,191 @@
+name: Package RTranslator Lite9 source
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/package-rtranslator-lite9-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout builder branch
+        uses: actions/checkout@v4
+
+      - name: Clone RTranslator v3.00 with all submodules
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone \
+            --depth 1 \
+            --branch v3.00 \
+            --recurse-submodules \
+            --shallow-submodules \
+            https://github.com/niedev/RTranslator.git RTranslator-Lite9-source
+          cd RTranslator-Lite9-source
+          git rev-parse HEAD > UPSTREAM_COMMIT.txt
+          git submodule status > SUBMODULES.txt
+
+      - name: Apply Lite9 source patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=RTranslator-Lite9-source
+          python3 rtranslator-lite/patch_low_memory.py "$ROOT"
+          python3 rtranslator-lite/patch_lite5_identity.py "$ROOT"
+          python3 rtranslator-lite/patch_lite6_real_downloader.py "$ROOT"
+          python3 rtranslator-lite/patch_lite7_walkie_safety.py "$ROOT"
+          python3 rtranslator-lite/patch_lite8_sherpa_asr.py "$ROOT"
+          python3 rtranslator-lite/patch_lite8_ort_bridge.py "$ROOT"
+          python3 rtranslator-lite/patch_lite9_runtime_fix.py "$ROOT"
+
+      - name: Add builder and reconstruction files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=RTranslator-Lite9-source
+          mkdir -p "$ROOT/DANIIL-builder/.github/workflows"
+          cp -a rtranslator-lite "$ROOT/DANIIL-builder/"
+          cp .github/workflows/build-rtranslator-lite9.yml "$ROOT/DANIIL-builder/.github/workflows/"
+          cp .github/workflows/build-rtranslator-lite.yml "$ROOT/DANIIL-builder/.github/workflows/"
+          cp .github/workflows/package-rtranslator-lite9-source.yml "$ROOT/DANIIL-builder/.github/workflows/"
+          cat > "$ROOT/SOURCE_SNAPSHOT.md" <<'EOF'
+          # RTranslator Lite9 full source snapshot
+
+          This snapshot contains the RTranslator v3.00 source tree, recursively checked-out source submodules, and the DANIIL Lite9 source patches applied on top.
+
+          Included:
+          - patched Android application source for Lite9;
+          - all recursively checked-out submodule source trees;
+          - DANIIL patch scripts and CI workflows under `DANIIL-builder/`;
+          - upstream commit and submodule revision manifests.
+
+          Intentionally excluded because they are generated/binary dependencies rather than source code:
+          - APK/AAB/build outputs and Gradle caches;
+          - ONNX model weights;
+          - downloaded AAR/JAR dependency binaries;
+          - Git object databases (`.git`).
+
+          The included Lite9 build workflow downloads the exact Sherpa/ONNX Runtime/model binaries needed to reproduce the APK.
+          EOF
+
+      - name: Remove generated and binary payloads
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=RTranslator-Lite9-source
+          find "$ROOT" -type d \( -name .git -o -name .gradle -o -name build -o -name .cxx \) -prune -exec rm -rf {} + || true
+          find "$ROOT" -type f \( \
+            -name '*.apk' -o -name '*.aab' -o -name '*.aar' -o -name '*.jar' -o \
+            -name '*.onnx' -o -name '*.tflite' -o -name '*.pt' -o -name '*.bin' -o \
+            -name '*.zip' -o -name '*.tar' -o -name '*.tar.gz' -o -name '*.tar.bz2' \
+          \) -delete || true
+
+      - name: Build source ZIP and split for Drive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          zip -9 -r RTranslator-Lite9-full-source.zip RTranslator-Lite9-source >/dev/null
+          sha256sum RTranslator-Lite9-full-source.zip > RTranslator-Lite9-full-source.zip.sha256
+          mkdir source-parts
+          split -b 80M -d -a 2 RTranslator-Lite9-full-source.zip source-parts/RTranslator-Lite9-full-source.zip.part
+          (cd source-parts && sha256sum * > SHA256SUMS.txt)
+          ls -lh RTranslator-Lite9-full-source.zip source-parts/*
+          du -sh RTranslator-Lite9-source
+
+      - name: Upload complete source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-full-source
+          path: |
+            RTranslator-Lite9-full-source.zip
+            RTranslator-Lite9-full-source.zip.sha256
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 00
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part00') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part00
+          path: source-parts/RTranslator-Lite9-full-source.zip.part00
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 01
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part01') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part01
+          path: source-parts/RTranslator-Lite9-full-source.zip.part01
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 02
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part02') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part02
+          path: source-parts/RTranslator-Lite9-full-source.zip.part02
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 03
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part03') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part03
+          path: source-parts/RTranslator-Lite9-full-source.zip.part03
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 04
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part04') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part04
+          path: source-parts/RTranslator-Lite9-full-source.zip.part04
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 05
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part05') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part05
+          path: source-parts/RTranslator-Lite9-full-source.zip.part05
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 06
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part06') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part06
+          path: source-parts/RTranslator-Lite9-full-source.zip.part06
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source part 07
+        if: ${{ hashFiles('source-parts/RTranslator-Lite9-full-source.zip.part07') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-part07
+          path: source-parts/RTranslator-Lite9-full-source.zip.part07
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload source checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-Lite9-source-checksums
+          path: source-parts/SHA256SUMS.txt
+          retention-days: 14
