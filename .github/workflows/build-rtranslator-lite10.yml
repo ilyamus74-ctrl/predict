@@ -1,0 +1,297 @@
+name: Build RTranslator 3 Lite10 llama model selector
+
+on:
+  push:
+    branches:
+      - rtranslator-lite-build
+    paths:
+      - '.github/workflows/build-rtranslator-lite10.yml'
+      - 'rtranslator-lite/patch_lite10_llama_models.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx6g -Dfile.encoding=UTF-8
+      LLAMA_COMMIT: 0b1bad14ff204627636aeb1de22ddcd5acb859d4
+
+    steps:
+      - name: Checkout builder branch
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        shell: bash
+        run: |
+          set -euxo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            'ndk;28.0.12674087' \
+            'cmake;3.22.1' \
+            'cmake;3.31.6'
+
+      - name: Clone RTranslator v3.00
+        shell: bash
+        run: |
+          git clone \
+            --depth 1 \
+            --branch v3.00 \
+            --recurse-submodules \
+            --shallow-submodules \
+            https://github.com/niedev/RTranslator.git RTranslator
+
+      - name: Prepare matched ORT 1.27.1 sherpa and INT8 ASR assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p RTranslator/app/libs
+
+          curl -fL --retry 3 -o sherpa.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar
+          echo '6419cd8bc983e0c4fab06067f0fe0313fdc0f7103818ac1e7a08d50787b7a82b  sherpa.aar' | sha256sum -c -
+          rm -rf sherpa-aar && mkdir sherpa-aar
+          unzip -q sherpa.aar -d sherpa-aar
+          find sherpa-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
+          rm -f sherpa-aar/jni/arm64-v8a/libonnxruntime.so sherpa-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+          test -f sherpa-aar/jni/arm64-v8a/libsherpa-onnx-jni.so
+          (cd sherpa-aar && zip -qr ../RTranslator/app/libs/sherpa-onnx-1.13.5-no-ort-arm64.aar .)
+
+          ORT_URL=https://github.com/csukuangfj/onnxruntime-libs/releases/download/v1.27.1/onnxruntime-android-1.27.1.zip
+          curl -fL --retry 3 -o ort-1.27.1.zip "$ORT_URL"
+          echo 'defade26209f72cf4fa9769b18052c842833d6bef12924595d26f03b995548ca  ort-1.27.1.zip' | sha256sum -c -
+          rm -rf ort-aar && mkdir ort-aar
+          unzip -q ort-1.27.1.zip -d ort-aar
+          find ort-aar/jni -mindepth 1 -maxdepth 1 -type d ! -name arm64-v8a -exec rm -rf {} +
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime.so
+          test -f ort-aar/jni/arm64-v8a/libonnxruntime4j_jni.so
+          strings ort-aar/jni/arm64-v8a/libonnxruntime.so | grep -Fxq '1.27.1'
+          (cd ort-aar && zip -qr ../RTranslator/app/libs/onnxruntime-android-1.27.1-full-arm64.aar .)
+
+          curl -fL --retry 3 -o whisper-small.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-small.tar.bz2
+          echo '486a46afbb7ba798507190ffe02fea2dd726049af212e774537efac6afb210a6  whisper-small.tar.bz2' | sha256sum -c -
+          rm -rf whisper-model && mkdir whisper-model
+          tar -xjf whisper-small.tar.bz2 -C whisper-model
+          SRC=whisper-model/sherpa-onnx-whisper-small
+          DST=RTranslator/app/src/main/assets/sherpa
+          mkdir -p "$DST"
+          cp "$SRC/small-encoder.int8.onnx" "$DST/"
+          cp "$SRC/small-decoder.int8.onnx" "$DST/"
+          cp "$SRC/small-tokens.txt" "$DST/"
+          curl -fL --retry 3 -o "$DST/silero_vad.int8.onnx" \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.int8.onnx
+          echo 'c36d490aff5ab924ca6c7aeec4d8f6bd3d22db6fa17611b9c5b17eae58ac3a20  '"$DST/silero_vad.int8.onnx" | sha256sum -c -
+          test "$(stat -c%s "$DST/small-encoder.int8.onnx")" -eq 112442483
+          test "$(stat -c%s "$DST/small-decoder.int8.onnx")" -eq 262226114
+
+      - name: Build pinned llama.cpp Android AAR
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
+          cd llama.cpp
+          git checkout "$LLAMA_COMMIT"
+          test "$(git rev-parse HEAD)" = "$LLAMA_COMMIT"
+
+          LIB=examples/llama.android/lib
+          GRADLE="$LIB/build.gradle.kts"
+          CPP="$LIB/src/main/cpp/ai_chat.cpp"
+
+          # Match the app's NDK/minSdk and package arm64 only.
+          sed -i 's/ndkVersion = "29.0.13113456"/ndkVersion = "28.0.12674087"/' "$GRADLE"
+          sed -i 's/minSdk = 33/minSdk = 28/' "$GRADLE"
+          sed -i 's/abiFilters += listOf("arm64-v8a", "x86_64")/abiFilters += listOf("arm64-v8a")/' "$GRADLE"
+
+          # Translation profile: smaller KV cache and deterministic generation.
+          sed -i 's/DEFAULT_CONTEXT_SIZE    = 8192/DEFAULT_CONTEXT_SIZE    = 2048/' "$CPP"
+          sed -i 's/DEFAULT_SAMPLER_TEMP    = 0.3f/DEFAULT_SAMPLER_TEMP    = 0.0f/' "$CPP"
+
+          # We supply exact raw prompts for each MT model. Do not apply the embedded chat template;
+          # parse model special tokens in the prompt instead.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('examples/llama.android/lib/src/main/cpp/ai_chat.cpp')
+          s=p.read_text()
+          marker='Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt'
+          pos=s.find(marker)
+          if pos < 0: raise SystemExit('processUserPrompt not found')
+          head=s[:pos]; tail=s[pos:]
+          old='const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());'
+          if old not in tail: raise SystemExit('chat template flag not found in user prompt method')
+          tail=tail.replace(old, 'const bool has_chat_template = false; // Lite10 raw MT prompt', 1)
+          oldtok='common_tokenize(g_context, formatted_user_prompt, has_chat_template, has_chat_template)'
+          if oldtok not in tail: raise SystemExit('user tokenization call not found')
+          tail=tail.replace(oldtok, 'common_tokenize(g_context, formatted_user_prompt, false, true)', 1)
+          p.write_text(head+tail)
+          PY
+
+          # Java-friendly blocking facade around the official coroutine API.
+          cat > "$LIB/src/main/java/com/arm/aichat/TranslationBridge.kt" <<'KOT'
+          package com.arm.aichat
+
+          import android.content.Context
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.flow.toList
+          import kotlinx.coroutines.runBlocking
+
+          class TranslationBridge private constructor(context: Context) {
+              private val engine: InferenceEngine = AiChat.getInferenceEngine(context.applicationContext)
+
+              private suspend fun awaitInitialized() {
+                  val s = engine.state.first { it is InferenceEngine.State.Initialized || it is InferenceEngine.State.Error }
+                  if (s is InferenceEngine.State.Error) throw s.exception
+              }
+
+              @Synchronized
+              fun loadModel(path: String) = runBlocking {
+                  awaitInitialized()
+                  engine.loadModel(path)
+              }
+
+              @Synchronized
+              fun generateRaw(prompt: String, maxTokens: Int): String = runBlocking {
+                  engine.sendUserPrompt(prompt, maxTokens).toList().joinToString("")
+              }
+
+              @Synchronized
+              fun unload() {
+                  when (engine.state.value) {
+                      is InferenceEngine.State.ModelReady,
+                      is InferenceEngine.State.Error -> engine.cleanUp()
+                      else -> Unit
+                  }
+              }
+
+              companion object {
+                  @JvmStatic fun create(context: Context): TranslationBridge = TranslationBridge(context)
+              }
+          }
+          KOT
+
+          grep -n 'DEFAULT_CONTEXT_SIZE    = 2048' "$CPP"
+          grep -n 'DEFAULT_SAMPLER_TEMP    = 0.0f' "$CPP"
+          grep -n 'Lite10 raw MT prompt' "$CPP"
+          grep -n 'common_tokenize(g_context, formatted_user_prompt, false, true)' "$CPP"
+          grep -n 'minSdk = 28' "$GRADLE"
+          grep -n 'abiFilters += listOf("arm64-v8a")' "$GRADLE"
+
+          cd examples/llama.android
+          chmod +x gradlew
+          ./gradlew --no-daemon :lib:assembleRelease
+          AAR=lib/build/outputs/aar/lib-release.aar
+          test -f "$AAR"
+          unzip -l "$AAR" | tee "$GITHUB_WORKSPACE/llama-aar-contents.txt"
+          grep -q 'jni/arm64-v8a/libai-chat.so' "$GITHUB_WORKSPACE/llama-aar-contents.txt"
+          ! grep -q 'jni/x86_64/' "$GITHUB_WORKSPACE/llama-aar-contents.txt"
+          cp "$AAR" "$GITHUB_WORKSPACE/RTranslator/app/libs/llama-android-lite10.aar"
+
+      - name: Apply Lite10 patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 rtranslator-lite/patch_low_memory.py RTranslator
+          python3 rtranslator-lite/patch_lite5_identity.py RTranslator
+          python3 rtranslator-lite/patch_lite6_real_downloader.py RTranslator
+          python3 rtranslator-lite/patch_lite7_walkie_safety.py RTranslator
+          python3 rtranslator-lite/patch_lite8_sherpa_asr.py RTranslator
+          python3 rtranslator-lite/patch_lite9_runtime_fix.py RTranslator
+          python3 rtranslator-lite/patch_lite10_llama_models.py RTranslator
+
+          TRANS=RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/Translator.java
+          ENG=RTranslator/app/src/main/java/nie/translator/rtranslator/voice_translation/neural_networks/translation/LlamaCppTranslationEngine.java
+          MM=RTranslator/app/src/main/java/nie/translator/rtranslator/settings/ModelManagerFragment.java
+          grep -n 'MILMMT = 20' "$TRANS"
+          grep -n 'TINY_AYA = 21' "$TRANS"
+          grep -n 'TRANSLATE_GEMMA = 22' "$TRANS"
+          grep -n 'LlamaCppTranslationEngine.isLlamaMode' "$TRANS"
+          grep -n 'MiLMMT' "$ENG"
+          grep -n 'TinyAya' "$ENG"
+          grep -n 'TranslateGemma' "$ENG"
+          grep -n 'GGUF not found' "$MM"
+          grep -n 'llama-android-lite10.aar' RTranslator/app/build.gradle
+          grep -q 'applicationId "nie.translator.rtranslator.lite10"' RTranslator/app/build.gradle
+          grep -q "versionName '3.0.0-alpha3-lite10'" RTranslator/app/build.gradle
+          grep -R -q 'RTranslator Lite10' RTranslator/app/src/main/res/values*/strings.xml
+
+      - name: Configure Android SDK path
+        shell: bash
+        run: |
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > RTranslator/local.properties
+
+      - name: Build debug APK
+        working-directory: RTranslator
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify built Lite10 APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=RTranslator/app/build/outputs/apk/debug/app-debug.apk
+          rm -rf apkcheck verify && mkdir -p verify
+          unzip -q "$APK" -d apkcheck
+          strings apkcheck/classes*.dex > verify/apk-strings.txt
+
+          grep -q 'RTranslatorLite10' verify/apk-strings.txt
+          grep -q 'LlamaCppTranslationEngine' verify/apk-strings.txt
+          grep -q 'MiLMMT' verify/apk-strings.txt
+          grep -q 'TinyAya' verify/apk-strings.txt
+          grep -q 'TranslateGemma' verify/apk-strings.txt
+
+          test -f apkcheck/lib/arm64-v8a/libai-chat.so
+          find apkcheck/lib/arm64-v8a -maxdepth 1 -type f -printf '%f\n' | sort | tee verify/native-libs.txt
+          grep -Eq 'libggml|libai-chat' verify/native-libs.txt
+
+          test -f apkcheck/lib/arm64-v8a/libonnxruntime.so
+          test -f apkcheck/lib/arm64-v8a/libonnxruntime4j_jni.so
+          test -f apkcheck/lib/arm64-v8a/libsherpa-onnx-jni.so
+          test "$(find apkcheck/lib -name libonnxruntime.so | wc -l)" -eq 1
+          strings apkcheck/lib/arm64-v8a/libonnxruntime.so | grep -Fxq '1.27.1'
+
+          test -f apkcheck/assets/sherpa/small-encoder.int8.onnx
+          test -f apkcheck/assets/sherpa/small-decoder.int8.onnx
+          test -f apkcheck/assets/sherpa/silero_vad.int8.onnx
+          test -z "$(find apkcheck -type f -iname '*.gguf' -print -quit)"
+
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$AAPT" dump badging "$APK" | tee verify/apk-badging.txt
+          grep -q "package: name='nie.translator.rtranslator.lite10'" verify/apk-badging.txt
+          grep -q "application-label:'RTranslator Lite10'" verify/apk-badging.txt
+          sha256sum "$APK" | tee verify/apk.sha256
+          echo 'Lite10 verified: MADLAD + external GGUF selector + llama.cpp + sherpa ASR.' | tee verify/results.txt
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p out
+          cp RTranslator/app/build/outputs/apk/debug/app-debug.apk out/RTranslator-3.0.0-alpha3-lite10-llama-debug.apk
+          sha256sum out/RTranslator-3.0.0-alpha3-lite10-llama-debug.apk | tee out/SHA256SUMS.txt
+          cp llama-aar-contents.txt out/
+          cp verify/results.txt verify/apk.sha256 verify/native-libs.txt out/
+          ls -lh out/*
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTranslator-3.0.0-alpha3-lite10-llama
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
