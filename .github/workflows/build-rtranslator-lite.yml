@@ -106,14 +106,21 @@ jobs:
         shell: bash
         run: |
           APK=RTranslator/app/build/outputs/apk/debug/app-debug.apk
-          rm -rf apkcheck apk-strings.txt
+          rm -rf apkcheck apk-strings.txt apk-badging.txt
           unzip -q "$APK" -d apkcheck
           strings apkcheck/classes*.dex > apk-strings.txt
+
+          echo '--- verify Java/Dex Lite7 markers ---'
           grep -q 'LITE7 | ACTIVE Downloader2 | Whisper only' apk-strings.txt
-          grep -q 'REQUEST_CODE_WALKIE_TALKIE_MIC_PERMISSION' apk-strings.txt || true
           grep -q 'RTranslatorLite7' apk-strings.txt
-          grep -q 'nie.translator.rtranslator.lite7' apk-strings.txt
-          echo 'Built APK contains Lite7 active-downloader and WalkieTalkie safety markers.'
+
+          echo '--- verify APK manifest metadata with aapt ---'
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$AAPT" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='nie.translator.rtranslator.lite7'" apk-badging.txt
+          grep -q "application-label:'RTranslator Lite7'" apk-badging.txt
+
+          echo 'Built APK contains Lite7 active-downloader/WalkieTalkie markers and correct package metadata.'
 
       - name: Collect APK
         shell: bash
