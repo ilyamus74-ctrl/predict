@@ -15,20 +15,35 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/BigBIueWhale/angrybirds-8.0.3-arm64.git angrybirds
 
-      - name: Build reproducible arm64 APK
+      - name: Prepare original APK
         working-directory: angrybirds
         run: |
-          bash port/reproduce.sh
+          . port/prepare_inputs.sh
+          prepare_inputs
 
-      - name: Verify faithful APK SHA-256
+      - name: Build toolchain image
         working-directory: angrybirds
         run: |
-          echo "b410896234a6a9e9b65a396efd9ea40b89c9e15edcfc0b816bfd56937372a41a  out/angrybirds-8.0.3-arm64.apk" | sha256sum -c -
+          docker build -t ab-port -f port/docker/Dockerfile.ab-port .
+
+      - name: Build faithful arm64 APK
+        working-directory: angrybirds
+        run: |
+          docker run --rm --network none -v "$PWD":/work ab-port bash /work/port/build_apk.sh
+
+      - name: Record SHA-256
+        working-directory: angrybirds
+        run: |
+          sha256sum out/angrybirds-8.0.3-arm64.apk | tee out/SHA256.txt
+          ls -lh out/angrybirds-8.0.3-arm64.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: angrybirds-8.0.3-arm64
-          path: angrybirds/out/angrybirds-8.0.3-arm64.apk
+          path: |
+            angrybirds/out/angrybirds-8.0.3-arm64.apk
+            angrybirds/out/SHA256.txt
           if-no-files-found: error
+          compression-level: 0
           retention-days: 1
