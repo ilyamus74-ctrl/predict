@@ -1,0 +1,34 @@
+name: Build Angry Birds arm64 APK
+
+on:
+  push:
+    branches:
+      - tmp-build-angrybirds-apk
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Clone upstream source
+        run: |
+          git clone --depth 1 https://github.com/BigBIueWhale/angrybirds-8.0.3-arm64.git angrybirds
+
+      - name: Build reproducible arm64 APK
+        working-directory: angrybirds
+        run: |
+          bash port/reproduce.sh
+
+      - name: Verify faithful APK SHA-256
+        working-directory: angrybirds
+        run: |
+          echo "b410896234a6a9e9b65a396efd9ea40b89c9e15edcfc0b816bfd56937372a41a  out/angrybirds-8.0.3-arm64.apk" | sha256sum -c -
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: angrybirds-8.0.3-arm64
+          path: angrybirds/out/angrybirds-8.0.3-arm64.apk
+          if-no-files-found: error
+          retention-days: 1
