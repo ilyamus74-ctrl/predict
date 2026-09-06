@@ -31,19 +31,18 @@ jobs:
         run: |
           docker run --rm --network none -v "$PWD":/work ab-port bash /work/port/build_apk.sh
 
-      - name: Record SHA-256
+      - name: Verify APK hash and size
         working-directory: angrybirds
         run: |
-          sha256sum out/angrybirds-8.0.3-arm64.apk | tee out/SHA256.txt
+          sha256sum out/angrybirds-8.0.3-arm64.apk
+          test "$(sha256sum out/angrybirds-8.0.3-arm64.apk | awk '{print $1}')" = "16a21587f8b379b3a3a833f975f8f870c0376570cdb30065492dc27ff14a4164"
           ls -lh out/angrybirds-8.0.3-arm64.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: angrybirds-8.0.3-arm64
-          path: |
-            angrybirds/out/angrybirds-8.0.3-arm64.apk
-            angrybirds/out/SHA256.txt
+          path: angrybirds/out/angrybirds-8.0.3-arm64.apk
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
