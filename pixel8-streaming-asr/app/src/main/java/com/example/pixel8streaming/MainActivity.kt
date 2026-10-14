@@ -152,8 +152,8 @@ class MainActivity : Activity() {
         if (variantSpinner.selectedItemPosition == 0) "160" else "560"
 
     private fun language(): String = when (languageSpinner.selectedItemPosition) {
-        1 -> "ru"
-        2 -> "de"
+        1 -> "ru-RU"
+        2 -> "de-DE"
         else -> "auto"
     }
 
@@ -364,6 +364,10 @@ class MainActivity : Activity() {
         var latest = ""
         var lastUi = 0L
         var segments = 0
+        var endpointEvents = 0
+        var maxSeenTokens = 0
+        var peakDb = -100.0
+        var speechLikePackets = 0
         val history = StringBuilder()
 
         try {
@@ -393,6 +397,10 @@ class MainActivity : Activity() {
             if (!running) return
             stream = recognizer.createStream()
             stream.setOption("language", lang)
+            // Verify that the native stream accepted the string, not that the model mapped it.
+            val actualPrompt = stream.getOption("language")
+            Log.i("Pixel8Nemotron", "Requested locale=$lang, stream option=$actualPrompt")
+            require(actualPrompt == lang) { "Language prompt was not stored by native stream" }
 
             val minSize = AudioRecord.getMinBufferSize(
                 rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -450,7 +458,18 @@ class MainActivity : Activity() {
                 decodeMs += (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000.0
                 audioMs += samples.size * 1000.0 / rate
 
-                val text = recognizer.getResult(stream).text.trim()
+                val result = recognizer.getResult(stream)
+                val text = result.text.trim()
+                maxSeenTokens = max(maxSeenTokens, result.tokens.size)
+                var sumOfSquares = 0.0
+                for (sample in samples) {
+                    sumOfSquares += sample.toDouble() * sample.toDouble()
+                }
+                val db = 20.0 * kotlin.math.log10(
+                    kotlin.math.sqrt(sumOfSquares / samples.size) + 1e-7
+                )
+                peakDb = kotlin.math.max(peakDb, db)
+                if (db > -42.0) speechLikePackets++
                 if (text.isNotEmpty() && text != latest) {
                     latest = text
                     if (firstPartialMs < 0) {
@@ -460,6 +479,9 @@ class MainActivity : Activity() {
 
                 val endpoint = recognizer.isEndpoint(stream)
                 if (endpoint) {
+                    endpointEvents++
+                    Log.d("Pixel8Nemotron", "Endpoint=$endpointEvents text.length=${text.length} " +
+                        "tokenCount=${result.tokens.size} locale=$lang")
                     if (text.isNotBlank()) {
                         segments++
                         if (history.isNotEmpty()) history.append("\n")
@@ -478,11 +500,15 @@ class MainActivity : Activity() {
                         "RTF декодера: %.2f | обработано: %.1f с\n" +
                         "Очередь: %.1f с (%d пакетов)\n" +
                         "Потеряно: %d пакетов | FINAL: %d\n" +
-                        "Первый текст после старта: %s",
+                        "Первый текст после старта: %s\n" +
+                        "Пик микрофона: %.0f dBFS | пакетов с сигналом: %d\n" +
+                        "Токенов (макс.): %d | Endpoints: %d | locale=%s",
                         rtf, audioMs / 1000.0,
                         queue.size / 10.0, queue.size,
                         droppedPackets.get(), segments,
-                        if (firstPartialMs >= 0) firstPartialMs.toString() + " мс" else "—"
+                        if (firstPartialMs >= 0) firstPartialMs.toString() + " мс" else "—",
+                        peakDb, speechLikePackets,
+                        maxSeenTokens, endpointEvents, lang
                     )
                     val partial = if (latest.isBlank()) "(слушаю)" else
                         latest + "\n[" + scriptLabel(latest) + "]"
@@ -514,11 +540,19 @@ class MainActivity : Activity() {
                 historyView.text = finalHistory
                 metricsView.text = String.format(
                     Locale.US,
-                    "FINAL RTF: %.2f | аудио: %.1f с | потеряно пакетов: %d",
-                    finalRtf, audioMs / 1000.0, droppedPackets.get()
+                    "FINAL RTF: %.2f | аудио: %.1f с | потерь: %d\n" +
+                    "Пик микрофона: %.0f dBFS | пакетов с сигналом: %d\n" +
+                    "Токенов (макс.): %d | Endpoints: %d | язык: %s",
+                    finalRtf, audioMs / 1000.0, droppedPackets.get(),
+                    peakDb, speechLikePackets, maxSeenTokens, endpointEvents, lang
                 )
             }
-            postStatus("Остановлено. Все результаты получены локально, без API.")
+            postStatus(
+                if (history.isEmpty() && speechLikePackets >= 8) {
+                    "Текст пустой, хотя микрофон зафиксировал сигнал. " +
+                    "Проверьте max tokens/endpoints в диагностике."
+                } else "Остановлено. Результат получен локально, без API."
+            )
         } catch (t: Throwable) {
             Log.e("Pixel8Nemotron", "Streaming ASR failed", t)
             postStatus("Ошибка ASR: " + t.javaClass.simpleName + ": " + t.message)
