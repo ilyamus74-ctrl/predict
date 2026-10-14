@@ -13,6 +13,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.speech.ModelDownloadListener;
 import android.speech.RecognitionListener;
 import android.speech.RecognitionSupport;
 import android.speech.RecognitionSupportCallback;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
+import java.util.List;
 
 public final class MainActivity extends Activity implements RecognitionListener {
     private static final int MIC_REQUEST = 92;
@@ -45,14 +47,19 @@ public final class MainActivity extends Activity implements RecognitionListener 
 
     private SpeechRecognizer recognizer;
     private Boolean localRecognizer;
-    private Spinner engineSpinner, modeSpinner;
+    private Spinner engineSpinner, modeSpinner, switchSpinner;
     private CheckBox restartCheck;
-    private TextView statusView, resultView, logView;
+    private TextView statusView, resultView, logView, languageView, switchView, modelsView;
     private ScrollView logScroll;
     private boolean running, listening;
     private int sessionNumber, errorCount;
     private long sessionStart, speechStart;
     private String currentLanguage = "не сообщён";
+    private String lastSwitch = "нет события";
+    private String ruModelState = "не проверено", deModelState = "не проверено";
+    private int detectionEvents, switchSuccess, switchFailed, switchNoModel, switchNotAttempted;
+    private int lastConfidence = -1, lastSwitchCode = -99;
+    private String lastReportedLanguage = "";
     private Runnable pendingRestart;
 
     @Override public void onCreate(Bundle state) {
@@ -120,11 +127,17 @@ public final class MainActivity extends Activity implements RecognitionListener 
                 "Только русский",
                 "Только немецкий"
         });
+        root.addView(label("Автоматическое переключение: чувствительность", 15));
+        switchSpinner = addSpinner(root, new String[]{
+                "QUICK_RESPONSE (раннее переключение)",
+                "BALANCED (требуется уверенность)"
+        });
+        root.addView(label("В режимах «Только русский/немецкий» переключение выключено.", 12));
         restartCheck = new CheckBox(this);
         restartCheck.setText("Автоматически продолжать после реплики");
         restartCheck.setChecked(true);
         root.addView(restartCheck);
-        addButton(root, "1. Проверить поддержку языков", v -> checkSupport());
+        addButton(root, "1. Проверить установку языков RU и DE", v -> checkSupport());
         addButton(root, "2. Начать распознавание", v -> startTest());
         addButton(root, "Остановить", v -> stopTest());
         addButton(root, "Запросить офлайн-модель RU", v -> requestModel("ru-RU"));
@@ -132,6 +145,12 @@ public final class MainActivity extends Activity implements RecognitionListener 
         addButton(root, "Скопировать журнал", v -> copyJournal());
         addButton(root, "Сохранить журнал TXT", v -> saveJournal());
 
+        modelsView = label("Локальные модели: RU — не проверено; DE — не проверено", 13);
+        root.addView(modelsView);
+        languageView = label("Обнаруженный язык: нет события", 14);
+        root.addView(languageView);
+        switchView = label("Переключение ASR: нет события", 14);
+        root.addView(switchView);
         statusView = label("Ожидание", 15);
         statusView.setTypeface(null, Typeface.BOLD);
         root.addView(statusView);
@@ -227,7 +246,9 @@ public final class MainActivity extends Activity implements RecognitionListener 
         if (auto) {
             intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true);
             intent.putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH,
-                    RecognizerIntent.LANGUAGE_SWITCH_BALANCED);
+                    switchSpinner.getSelectedItemPosition() == 0
+                            ? RecognizerIntent.LANGUAGE_SWITCH_QUICK_RESPONSE
+                            : RecognizerIntent.LANGUAGE_SWITCH_BALANCED);
             intent.putStringArrayListExtra(
                     RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES,
                     new ArrayList<>(Arrays.asList(LANGUAGES)));
@@ -244,53 +265,99 @@ public final class MainActivity extends Activity implements RecognitionListener 
         return recognitionIntent(language, index < 2);
     }
 
+    private boolean containsLanguage(List<String> list, String tag) {
+        for (String item : list) {
+            if (tag.equalsIgnoreCase(item)) return true;
+        }
+        return false;
+    }
+
+    private void displayModelStates() {
+        modelsView.setText("Модели локально: RU — " + ruModelState + "; DE — " + deModelState);
+    }
+
     private void checkSupport() {
-        if (running) { log("Для проверки остановите прослушивание"); return; }
+        if (running) {
+            log("Для проверки сначала остановите распознавание");
+            return;
+        }
         if (!micAllowed() || !prepareRecognizer()) return;
-        for (String code : LANGUAGES) {
-            final String target = code;
+        ruModelState = "проверяется";
+        deModelState = "проверяется";
+        displayModelStates();
+        for (String target : LANGUAGES) {
             try {
-                recognizer.checkRecognitionSupport(recognitionIntent(code, false),
+                recognizer.checkRecognitionSupport(recognitionIntent(target, false),
                         getMainExecutor(), new RecognitionSupportCallback() {
-                    @Override public void onSupportResult(RecognitionSupport s) {
-                        log("SUPPORT " + target + " installed="
-                                + s.getInstalledOnDeviceLanguages()
-                                + " downloadable=" + s.getSupportedOnDeviceLanguages()
-                                + " pending=" + s.getPendingOnDeviceLanguages()
-                                + " online=" + s.getOnlineLanguages());
+                    @Override public void onSupportResult(RecognitionSupport support) {
+                        boolean installed = containsLanguage(
+                                support.getInstalledOnDeviceLanguages(), target);
+                        boolean available = containsLanguage(
+                                support.getSupportedOnDeviceLanguages(), target);
+                        boolean pending = containsLanguage(
+                                support.getPendingOnDeviceLanguages(), target);
+                        String state = installed ? "УСТАНОВЛЕНА" :
+                                pending ? "ожидает загрузки" :
+                                available ? "ДОСТУПНА ДЛЯ ЗАГРУЗКИ" : "не подтверждена";
+                        if ("ru-RU".equals(target)) ruModelState = state;
+                        else deModelState = state;
+                        displayModelStates();
+                        log("MODEL " + target + ": " + state
+                                + " | installed=" + support.getInstalledOnDeviceLanguages()
+                                + " | downloadable=" + support.getSupportedOnDeviceLanguages()
+                                + " | pending=" + support.getPendingOnDeviceLanguages());
                     }
                     @Override public void onError(int error) {
-                        log("SUPPORT " + target + ": error " + error);
+                        if ("ru-RU".equals(target)) ruModelState = "ошибка " + error;
+                        else deModelState = "ошибка " + error;
+                        displayModelStates();
+                        log("MODEL " + target + ": CHECK_ERROR " + error + " " + errorLabel(error));
                     }
                 });
             } catch (Exception e) {
-                log("SUPPORT " + target + ": exception " + e);
+                log("MODEL " + target + ": CHECK_EXCEPTION " + e);
             }
         }
+
         try {
             recognizer.checkRecognitionSupport(selectedIntent(), getMainExecutor(),
                     new RecognitionSupportCallback() {
-                @Override public void onSupportResult(RecognitionSupport s) {
-                    log("AUTO: support callback есть. Это не доказывает переключение.");
+                @Override public void onSupportResult(RecognitionSupport result) {
+                    log("AUTO SUPPORT callback OK. Реальное переключение этим НЕ подтверждается.");
                 }
-                @Override public void onError(int error) {
-                    log("AUTO: support error " + error);
+                @Override public void onError(int code) {
+                    log("AUTO SUPPORT error " + code + " " + errorLabel(code));
                 }
             });
         } catch (Exception e) {
-            log("AUTO: support exception " + e);
+            log("AUTO SUPPORT exception " + e);
         }
     }
 
     private void requestModel(String lang) {
         if (running) { log("Сначала остановите распознавание"); return; }
         if (!micAllowed() || !prepareRecognizer()) return;
+        log("MODEL_DOWNLOAD request=" + lang);
         try {
-            recognizer.triggerModelDownload(recognitionIntent(lang, false));
-            log("Запрошена установка офлайн-модели " + lang
-                    + ". Сервис может проигнорировать запрос.");
+            recognizer.triggerModelDownload(recognitionIntent(lang, false),
+                    getMainExecutor(), new ModelDownloadListener() {
+                @Override public void onProgress(int percent) {
+                    log("MODEL_DOWNLOAD " + lang + ": " + percent + "%");
+                }
+                @Override public void onSuccess() {
+                    log("MODEL_DOWNLOAD " + lang + ": SUCCESS; обновляю список установленных");
+                    checkSupport();
+                }
+                @Override public void onScheduled() {
+                    log("MODEL_DOWNLOAD " + lang + ": SCHEDULED; позже повторите проверку");
+                }
+                @Override public void onError(int error) {
+                    log("MODEL_DOWNLOAD " + lang + ": ERROR " + error + " " + errorLabel(error));
+                    log("Проверьте доступность модели кнопкой проверки.");
+                }
+            });
         } catch (Exception e) {
-            log("Ошибка запроса модели: " + e);
+            log("MODEL_DOWNLOAD exception " + lang + ": " + e);
         }
     }
 
@@ -300,6 +367,11 @@ public final class MainActivity extends Activity implements RecognitionListener 
         if (!prepareRecognizer()) return;
         running = true;
         errorCount = 0;
+        detectionEvents = switchSuccess = switchFailed = switchNoModel = switchNotAttempted = 0;
+        log("RUN CONFIG engine=" + engineSpinner.getSelectedItem()
+                + " mode=" + modeSpinner.getSelectedItem()
+                + " switchSensitivity=" + switchSpinner.getSelectedItem()
+                + " models=" + ruModelState + "/" + deModelState);
         startSession();
     }
 
@@ -308,13 +380,20 @@ public final class MainActivity extends Activity implements RecognitionListener 
         sessionNumber++;
         sessionStart = SystemClock.elapsedRealtime();
         speechStart = 0;
-        currentLanguage = "нет события в сессии";
+        currentLanguage = "не определён";
+        lastSwitch = "нет события";
+        lastReportedLanguage = "";
+        lastSwitchCode = -99;
+        lastConfidence = -1;
+        languageView.setText("Обнаруженный язык: нет события в сессии");
+        switchView.setText("Переключение ASR: нет события в сессии");
         listening = true;
         status("слушаю");
         try {
             recognizer.startListening(selectedIntent());
             log("START: " + modeSpinner.getSelectedItem()
-                    + "; " + engineSpinner.getSelectedItem());
+                    + "; " + engineSpinner.getSelectedItem()
+                    + "; switch=" + switchSpinner.getSelectedItem());
         } catch (Exception e) {
             listening = false;
             running = false;
@@ -328,11 +407,13 @@ public final class MainActivity extends Activity implements RecognitionListener 
         if (!running) return;
         errorCount = error ? errorCount + 1 : 0;
         if (errorCount >= 5) {
+            logRunSummary();
             running = false;
             status("остановлено после пяти ошибок");
             return;
         }
         if (!restartCheck.isChecked()) {
+            logRunSummary();
             running = false;
             status("готово");
             return;
@@ -348,6 +429,7 @@ public final class MainActivity extends Activity implements RecognitionListener 
         listening = false;
         if (pendingRestart != null) handler.removeCallbacks(pendingRestart);
         pendingRestart = null;
+        logRunSummary();
         destroyRecognizer();
         status("остановлено");
         log("STOP");
@@ -375,25 +457,86 @@ public final class MainActivity extends Activity implements RecognitionListener 
     @Override public void onResults(Bundle b) {
         long now = SystemClock.elapsedRealtime();
         String text = bestText(b);
-        log("FINAL language=" + currentLanguage + " text=" + text
+        log("FINAL detectedLanguage=" + currentLanguage + " switch=" + lastSwitch + " text=" + text
                 + " sinceSpeechStart=" + (speechStart == 0 ? "n/a" : (now - speechStart) + "ms")
                 + " scores=" + scores(b));
-        resultView.setText("Язык: " + currentLanguage + "\nФинал: " + text);
+        resultView.setText("Обнаружено: " + currentLanguage + "\nПереключение: " + lastSwitch + "\nФинал: " + text);
         status("результат");
         finishSession(false);
     }
     @Override public void onPartialResults(Bundle b) {
         String text = bestText(b);
-        resultView.setText("Язык: " + currentLanguage + "\nЧастично: " + text);
-        log("PARTIAL language=" + currentLanguage + " text=" + text);
+        resultView.setText("Обнаружено: " + currentLanguage + "\nПереключение: " + lastSwitch + "\nЧастично: " + text);
+        log("PARTIAL detected=" + currentLanguage + " switch=" + lastSwitch + " text=" + text);
     }
+    private String switchLabel(int result) {
+        switch (result) {
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_NOT_ATTEMPTED:
+                return "NOT_ATTEMPTED (0)";
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SUCCEEDED:
+                return "SUCCEEDED (1)";
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_FAILED:
+                return "FAILED (2)";
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SKIPPED_NO_MODEL:
+                return "SKIPPED_NO_MODEL (3)";
+            default:
+                return "не сообщён (" + result + ")";
+        }
+    }
+
+    private void logRunSummary() {
+        log("RUN SUMMARY detection=" + detectionEvents
+                + " switchSucceeded=" + switchSuccess
+                + " switchFailed=" + switchFailed
+                + " switchSkippedNoModel=" + switchNoModel
+                + " switchNotAttempted=" + switchNotAttempted);
+    }
+
     @Override public void onLanguageDetection(Bundle b) {
-        currentLanguage = b.getString(SpeechRecognizer.DETECTED_LANGUAGE, "не указан");
-        log("LANGUAGE_EVENT detected=" + currentLanguage
-                + " confidence=" + b.getInt(
-                        SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL, -1)
-                + " switchResult=" + b.getInt(SpeechRecognizer.LANGUAGE_SWITCH_RESULT, -1));
-        status("язык определён");
+        if (b == null) return;
+        String detected = b.getString(SpeechRecognizer.DETECTED_LANGUAGE, "не указан");
+        int confidence = b.getInt(SpeechRecognizer.LANGUAGE_DETECTION_CONFIDENCE_LEVEL, -1);
+        int result = b.containsKey(SpeechRecognizer.LANGUAGE_SWITCH_RESULT)
+                ? b.getInt(SpeechRecognizer.LANGUAGE_SWITCH_RESULT, -1) : -1;
+        currentLanguage = detected;
+        lastSwitch = switchLabel(result);
+        detectionEvents++;
+
+        switch (result) {
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_NOT_ATTEMPTED:
+                switchNotAttempted++;
+                break;
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SUCCEEDED:
+                switchSuccess++;
+                break;
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_FAILED:
+                switchFailed++;
+                break;
+            case SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SKIPPED_NO_MODEL:
+                switchNoModel++;
+                break;
+        }
+        languageView.setText("Обнаруженный язык: " + detected
+                + " (confidence=" + confidence + ")");
+        switchView.setText("Переключение ASR: " + lastSwitch
+                + " | успешно=" + switchSuccess
+                + ", ошибки=" + switchFailed
+                + ", нет модели=" + switchNoModel);
+
+        // Не засоряем лог сотнями идентичных событий каждые несколько миллисекунд.
+        if (!detected.equals(lastReportedLanguage)
+                || confidence != lastConfidence
+                || result != lastSwitchCode
+                || result == SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SUCCEEDED
+                || result == SpeechRecognizer.LANGUAGE_SWITCH_RESULT_FAILED
+                || result == SpeechRecognizer.LANGUAGE_SWITCH_RESULT_SKIPPED_NO_MODEL) {
+            log("LANGUAGE detected=" + detected + " confidence=" + confidence
+                    + " switch=" + switchLabel(result));
+        }
+        lastReportedLanguage = detected;
+        lastConfidence = confidence;
+        lastSwitchCode = result;
+        status("язык обнаружен (не обязательно переключён)");
     }
     @Override public void onEvent(int event, Bundle b) {
         log("EVENT " + event);
