@@ -1,0 +1,41 @@
+name: Build Pixel 8 RU-DE ASR diagnostic APK
+on:
+  push:
+    branches:
+      - chatgpt/pixel8-asr-diagnostic-20261014
+    paths:
+      - 'pixel8-asr-diagnostic/**'
+      - '.github/workflows/build-pixel8-asr.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Assemble debug APK
+        run: gradle -p pixel8-asr-diagnostic --no-daemon --stacktrace :app:assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pixel8-RU-DE-ASR-Diagnostic-APK
+          path: pixel8-asr-diagnostic/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
