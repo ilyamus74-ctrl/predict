@@ -38,7 +38,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Pixel8-RU-DE-ASR-Diagnostic-APK
+          name: Pixel8-RU-DE-ASR-Quick-Balanced-APK
           path: pixel8-asr-diagnostic/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
