@@ -5,11 +5,11 @@
         <intent><action android:name="android.speech.RecognitionService"/></intent>
     </queries>
     <application
-        android:label="RU-DE ASR Test"
+        android:label="RU-DE ASR Quick Test"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name="com.example.ru_de_asr.MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
