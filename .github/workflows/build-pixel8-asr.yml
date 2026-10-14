@@ -27,9 +27,12 @@ jobs:
         with:
           gradle-version: '8.7'
       - name: Install Android platform using preinstalled SDK
+        shell: bash
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
       - name: Assemble debug APK
         run: gradle -p pixel8-asr-diagnostic --no-daemon --stacktrace :app:assembleDebug
       - name: Upload APK
