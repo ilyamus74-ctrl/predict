@@ -7,11 +7,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'com.example.ru_de_asr'
+        applicationId 'com.example.ru_de_asr.quicktest'
         minSdk 34
         targetSdk 35
-        versionCode 1
-        versionName '0.1-diagnostic'
+        versionCode 2
+        versionName '0.2-quick-balanced'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
